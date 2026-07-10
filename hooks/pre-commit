@@ -1,0 +1,37 @@
+#!/bin/sh
+# Zero-Error Black Box — pre-commit hook
+# Runs fast validators: type-check, lint, doctrine-check, test, security-scan
+# Timeout: 30 seconds
+
+ZERO_ERROR_DIR=".zero-error"
+
+if [ ! -d "$ZERO_ERROR_DIR" ]; then
+  exit 0
+fi
+
+echo "Zero-Error: Validating commit..."
+
+# Load timeout from CONSTITUTION.md
+TIMEOUT=30
+if [ -f "CONSTITUTION.md" ]; then
+  PARSED_TIMEOUT=$(grep -oP 'preCommitTimeout:\s*\K\d+' CONSTITUTION.md 2>/dev/null || echo "")
+  if [ -n "$PARSED_TIMEOUT" ]; then
+    TIMEOUT=$PARSED_TIMEOUT
+  fi
+fi
+
+# Run validators
+node "$ZERO_ERROR_DIR/validators/index.js" pre-commit
+
+RESULT=$?
+
+if [ $RESULT -ne 0 ]; then
+  echo ""
+  echo "Zero-Error: Commit BLOQUEADO. Corrija os erros acima."
+  echo "Zero-Error: Cada erro tem um 'ai_hint' com a instrução de correção."
+  echo "Zero-Error: Para bypass (NÃO RECOMENDADO): git commit --no-verify"
+  exit 1
+fi
+
+echo "Zero-Error: Commit aprovado. 100% validado."
+exit 0

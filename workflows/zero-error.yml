@@ -1,0 +1,66 @@
+# Zero-Error Black Box — CI/CD Workflow
+# Runs ALL validators on PRs. Timeout: 10 minutes.
+
+name: Zero-Error Validation
+
+on:
+  pull_request:
+    branches: [main, develop, master]
+  push:
+    branches: [main, master]
+
+jobs:
+  zero-error-validate:
+    name: Zero-Error 100% Validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          if [ -f package.json ]; then npm ci || npm install; fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Install Zero-Error validators dependencies
+        run: |
+          if [ -d .zero-error ]; then
+            cd .zero-error && npm install --production 2>/dev/null || true
+          fi
+
+      - name: Install security tools
+        run: |
+          pip install semgrep gitleaks 2>/dev/null || true
+          go install github.com/gitleaks/gitleaks/v8@latest 2>/dev/null || true
+
+      - name: Run Zero-Error validators (CI mode)
+        run: |
+          if [ -d .zero-error ]; then
+            node .zero-error/validators/index.js ci
+          else
+            echo "Zero-Error: .zero-error/ not found. Skipping."
+          fi
+
+      - name: Upload Zero-Error report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zero-error-report
+          path: |
+            zero-error-feedback.json
+            coverage/
+          retention-days: 7

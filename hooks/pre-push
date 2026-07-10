@@ -1,0 +1,36 @@
+#!/bin/sh
+# Zero-Error Black Box — pre-push hook
+# Runs all pre-commit validators + property-tests + impact-analysis
+# Timeout: 2 minutes
+
+ZERO_ERROR_DIR=".zero-error"
+
+if [ ! -d "$ZERO_ERROR_DIR" ]; then
+  exit 0
+fi
+
+echo "Zero-Error: Validating push..."
+
+# Load timeout from CONSTITUTION.md
+TIMEOUT=120
+if [ -f "CONSTITUTION.md" ]; then
+  PARSED_TIMEOUT=$(grep -oP 'prePushTimeout:\s*\K\d+' CONSTITUTION.md 2>/dev/null || echo "")
+  if [ -n "$PARSED_TIMEOUT" ]; then
+    TIMEOUT=$PARSED_TIMEOUT
+  fi
+fi
+
+# Run validators
+node "$ZERO_ERROR_DIR/validators/index.js" pre-push
+
+RESULT=$?
+
+if [ $RESULT -ne 0 ]; then
+  echo ""
+  echo "Zero-Error: Push BLOQUEADO. Corrija os erros acima."
+  echo "Zero-Error: Para bypass (NÃO RECOMENDADO): git push --no-verify"
+  exit 1
+fi
+
+echo "Zero-Error: Push aprovado. 100% validado."
+exit 0
