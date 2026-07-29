@@ -1,7 +1,7 @@
 #!/bin/sh
-# Zero-Error Black Box — pre-commit hook
-# Runs fast validators: type-check, lint, doctrine-check, test, security-scan
-# Timeout: 30 seconds
+# AI Black Box v2 — pre-commit hook
+# Runs fast validators with cache + incremental update + progressive feedback
+# Timeout: 30 seconds (95% of commits < 3s with cache)
 
 ZERO_ERROR_DIR=".zero-error"
 
@@ -9,29 +9,39 @@ if [ ! -d "$ZERO_ERROR_DIR" ]; then
   exit 0
 fi
 
-echo "Zero-Error: Validating commit..."
+echo "AI Black Box v2: Validating commit..."
 
-# Load timeout from CONSTITUTION.md
+# Load timeout from gates.json
 TIMEOUT=30
-if [ -f "CONSTITUTION.md" ]; then
-  PARSED_TIMEOUT=$(grep -oP 'preCommitTimeout:\s*\K\d+' CONSTITUTION.md 2>/dev/null || echo "")
+if [ -f "$ZERO_ERROR_DIR/gates.json" ]; then
+  PARSED_TIMEOUT=$(node --input-type=commonjs -e "try{const fs=require('fs');const g=JSON.parse(fs.readFileSync('./$ZERO_ERROR_DIR/gates.json','utf-8'));console.log(g.timeout?.['pre-commit']||30)}catch{console.log(30)}" 2>/dev/null || echo "")
   if [ -n "$PARSED_TIMEOUT" ]; then
     TIMEOUT=$PARSED_TIMEOUT
   fi
 fi
 
-# Run validators
-node "$ZERO_ERROR_DIR/validators/index.js" pre-commit
+# Incremental update: refresh state-context.md + architecture-map for changed files
+node "$ZERO_ERROR_DIR/lib/incremental-updater.js" 2>/dev/null
 
+# Run validators with progressive feedback (timeout enforced)
+timeout "$TIMEOUT" node "$ZERO_ERROR_DIR/validators/index.js" pre-commit
 RESULT=$?
 
-if [ $RESULT -ne 0 ]; then
+if [ $RESULT -eq 124 ]; then
   echo ""
-  echo "Zero-Error: Commit BLOQUEADO. Corrija os erros acima."
-  echo "Zero-Error: Cada erro tem um 'ai_hint' com a instrução de correção."
-  echo "Zero-Error: Para bypass (NÃO RECOMENDADO): git commit --no-verify"
+  echo "AI Black Box v2: TIMEOUT (${TIMEOUT}s) excedido no pre-commit."
+  echo "AI Black Box v2: Commit BLOQUEADO. Otimize ou use --no-verify (NAO RECOMENDADO)."
   exit 1
 fi
 
-echo "Zero-Error: Commit aprovado. 100% validado."
+if [ $RESULT -ne 0 ]; then
+  echo ""
+  echo "AI Black Box v2: Commit BLOQUEADO. Corrija os erros acima."
+  echo "AI Black Box v2: Cada erro tem um 'ai_hint' com a instrucao de correcao."
+  echo "AI Black Box v2: Para bypass (NAO RECOMENDADO): git commit --no-verify"
+  echo "AI Black Box v2: AVISO: O CI pipeline ira bloquear o PR se os validators falharem."
+  exit 1
+fi
+
+echo "AI Black Box v2: Commit aprovado. 100% validado."
 exit 0

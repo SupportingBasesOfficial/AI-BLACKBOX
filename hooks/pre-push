@@ -1,6 +1,6 @@
 #!/bin/sh
-# Zero-Error Black Box — pre-push hook
-# Runs all pre-commit validators + property-tests + impact-analysis
+# AI Black Box v2 — pre-push hook
+# Runs pre-commit validators + property-tests + impact-analysis + schema-sync + api-compat + perf-budget
 # Timeout: 2 minutes
 
 ZERO_ERROR_DIR=".zero-error"
@@ -9,28 +9,35 @@ if [ ! -d "$ZERO_ERROR_DIR" ]; then
   exit 0
 fi
 
-echo "Zero-Error: Validating push..."
+echo "AI Black Box v2: Validating push..."
 
-# Load timeout from CONSTITUTION.md
+# Load timeout from gates.json
 TIMEOUT=120
-if [ -f "CONSTITUTION.md" ]; then
-  PARSED_TIMEOUT=$(grep -oP 'prePushTimeout:\s*\K\d+' CONSTITUTION.md 2>/dev/null || echo "")
+if [ -f "$ZERO_ERROR_DIR/gates.json" ]; then
+  PARSED_TIMEOUT=$(node --input-type=commonjs -e "try{const fs=require('fs');const g=JSON.parse(fs.readFileSync('./$ZERO_ERROR_DIR/gates.json','utf-8'));console.log(g.timeout?.['pre-push']||120)}catch{console.log(120)}" 2>/dev/null || echo "")
   if [ -n "$PARSED_TIMEOUT" ]; then
     TIMEOUT=$PARSED_TIMEOUT
   fi
 fi
 
-# Run validators
-node "$ZERO_ERROR_DIR/validators/index.js" pre-push
-
+# Run validators (timeout enforced)
+timeout "$TIMEOUT" node "$ZERO_ERROR_DIR/validators/index.js" pre-push
 RESULT=$?
 
-if [ $RESULT -ne 0 ]; then
+if [ $RESULT -eq 124 ]; then
   echo ""
-  echo "Zero-Error: Push BLOQUEADO. Corrija os erros acima."
-  echo "Zero-Error: Para bypass (NÃO RECOMENDADO): git push --no-verify"
+  echo "AI Black Box v2: TIMEOUT (${TIMEOUT}s) excedido no pre-push."
+  echo "AI Black Box v2: Push BLOQUEADO. Otimize ou use --no-verify (NAO RECOMENDADO)."
   exit 1
 fi
 
-echo "Zero-Error: Push aprovado. 100% validado."
+if [ $RESULT -ne 0 ]; then
+  echo ""
+  echo "AI Black Box v2: Push BLOQUEADO. Corrija os erros acima."
+  echo "AI Black Box v2: Para bypass (NAO RECOMENDADO): git push --no-verify"
+  echo "AI Black Box v2: AVISO: O CI pipeline ira bloquear o PR se os validators falharem."
+  exit 1
+fi
+
+echo "AI Black Box v2: Push aprovado. 100% validado."
 exit 0

@@ -1,7 +1,8 @@
-# Zero-Error Black Box — CI/CD Workflow
-# Runs ALL validators on PRs. Timeout: 10 minutes.
+# AI Black Box v2 — CI/CD Workflow
+# Runs ALL validators on PRs (supreme judge). Timeout: 10 minutes.
+# Bimodal enforcement: local hooks can be bypassed, CI cannot.
 
-name: Zero-Error Validation
+name: AI Black Box v2 Validation
 
 on:
   pull_request:
@@ -10,8 +11,8 @@ on:
     branches: [main, master]
 
 jobs:
-  zero-error-validate:
-    name: Zero-Error 100% Validation
+  ai-blackbox-validate:
+    name: AI Black Box v2 — 100% Validation
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -36,7 +37,7 @@ jobs:
           if [ -f package.json ]; then npm ci || npm install; fi
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Install Zero-Error validators dependencies
+      - name: Install AI Black Box dependencies
         run: |
           if [ -d .zero-error ]; then
             cd .zero-error && npm install --production 2>/dev/null || true
@@ -47,20 +48,37 @@ jobs:
           pip install semgrep gitleaks 2>/dev/null || true
           go install github.com/gitleaks/gitleaks/v8@latest 2>/dev/null || true
 
-      - name: Run Zero-Error validators (CI mode)
+      - name: Verify integrity (immutable files)
+        run: |
+          if [ -f .zero-error/.integrity ]; then
+            node --input-type=module -e "
+              import('.zero-error/lib/integrity-guard.js').then(m => {
+                const r = m.verifyIntegrity('.zero-error');
+                if (!r.valid) {
+                  console.error('INTEGRITY VIOLATION:');
+                  r.violations.forEach(v => console.error('  - ' + v.file + ': ' + v.reason));
+                  process.exit(1);
+                }
+                console.log('Integrity: OK');
+              });
+            "
+          fi
+
+      - name: Run AI Black Box validators (CI mode — supreme judge)
         run: |
           if [ -d .zero-error ]; then
             node .zero-error/validators/index.js ci
           else
-            echo "Zero-Error: .zero-error/ not found. Skipping."
+            echo "AI Black Box v2: .zero-error/ not found. Skipping."
           fi
 
-      - name: Upload Zero-Error report
+      - name: Upload AI Black Box report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: zero-error-report
+          name: ai-blackbox-report
           path: |
             zero-error-feedback.json
             coverage/
+            .zero-error/.validator-cache.json
           retention-days: 7

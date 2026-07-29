@@ -1,6 +1,6 @@
 // validators/test.js — Runs project tests, with fallback for projects without tests
 
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import { ValidatorResult, ValidatorError } from "../lib/validator-contract.js";
@@ -72,11 +72,73 @@ export async function run(files, config = {}) {
     }
   }
 
+  const criticalPathErrors = checkCriticalPathCoverage(cwd, files, config);
+  errors.push(...criticalPathErrors);
+
   return new ValidatorResult({
     passed: errors.length === 0,
     errors,
     duration_ms: Date.now() - startTime
   });
+}
+
+function checkCriticalPathCoverage(cwd, files, config) {
+  const errors = [];
+  const zeroErrorDir = config.zeroErrorDir || join(cwd, ".zero-error");
+  const sourceOfTruthPath = join(zeroErrorDir, "source-of-truth.json");
+
+  if (!existsSync(sourceOfTruthPath)) return errors;
+
+  try {
+    const sourceOfTruth = JSON.parse(readFileSync(sourceOfTruthPath, "utf-8"));
+    const criticalPaths = sourceOfTruth.project_integrity?.critical_paths || [];
+    const requireTestCoverage = sourceOfTruth.project_integrity?.critical_path_test_required ?? false;
+
+    if (!requireTestCoverage || criticalPaths.length === 0) return errors;
+
+    for (const file of (files || [])) {
+      const isCritical = criticalPaths.some(cp => file.toLowerCase().includes(cp.toLowerCase().replace(/\/$/, "")));
+      if (!isCritical) continue;
+
+      const testFile = findCorrespondingTestFile(cwd, file);
+      if (!testFile) {
+        errors.push(new ValidatorError({
+          file: file,
+          line: 0,
+          rule: "critical-path-no-test",
+          message: `Critical path file "${file}" has no corresponding test file`,
+          ai_hint: `This file is in a critical path (${criticalPaths.find(cp => file.toLowerCase().includes(cp.toLowerCase().replace(/\/$/, "")))}). Create a test file before committing.`,
+          severity: "error",
+        }));
+      }
+    }
+  } catch {}
+
+  return errors;
+}
+
+function findCorrespondingTestFile(cwd, sourceFile) {
+  const baseName = sourceFile.replace(/\.\w+$/, "");
+  const candidates = [
+    `${baseName}.test.ts`,
+    `${baseName}.test.js`,
+    `${baseName}.spec.ts`,
+    `${baseName}.spec.js`,
+    `${baseName}.test.tsx`,
+    `${baseName}.test.jsx`,
+    `tests/${baseName}.test.ts`,
+    `tests/${baseName}.test.js`,
+    `tests/${baseName}.spec.ts`,
+    `tests/${baseName}.spec.js`,
+    `test_${baseName.split("/").pop()}.py`,
+    `tests/test_${baseName.split("/").pop()}.py`,
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(join(cwd, candidate))) return candidate;
+  }
+
+  return null;
 }
 
 function detectTestFramework(cwd) {

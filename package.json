@@ -1,15 +1,20 @@
 {
-  "name": "zero-error-box",
-  "version": "0.1.0",
-  "description": "Black box that injects the Zero-Error Doctrine into any AI-assisted project",
+  "name": "ai-blackbox-v2",
+  "version": "2.0.0",
+  "description": "AI Black Box v2 — Context Engine Universal for enterprise-grade AI code generation",
   "type": "module",
   "bin": {
-    "zero-error": "./init.js"
+    "ai-blackbox": "./init.js"
   },
   "scripts": {
     "init": "node init.js",
+    "update": "node init.js --update",
+    "force": "node init.js --force",
     "test": "node --test tests/",
-    "validate": "node validators/doctrine-check.js"
+    "validate": "node validators/index.js pre-commit",
+    "validate:push": "node validators/index.js pre-push",
+    "validate:ci": "node validators/index.js ci",
+    "integrity": "node -e \"import('./lib/integrity-guard.js').then(m => { const r = m.verifyIntegrity('.'); console.log(r.valid ? 'OK' : 'VIOLATED'); if(!r.valid) r.violations.forEach(v => console.error(v.file + ': ' + v.reason)); process.exit(r.valid ? 0 : 1); })\""
   },
   "dependencies": {
     "tree-sitter": "^0.21.0",

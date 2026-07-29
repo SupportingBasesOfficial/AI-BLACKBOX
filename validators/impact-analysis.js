@@ -1,6 +1,6 @@
 // validators/impact-analysis.js — Analyzes blast radius of changes
 
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "fs";
 import { extname, basename, dirname, join } from "path";
 import { execSync } from "child_process";
 import { ValidatorResult, ValidatorError } from "../lib/validator-contract.js";
@@ -51,6 +51,10 @@ export async function run(files, config = {}) {
       }));
     }
   }
+
+  // Cross-service impact analysis (Gap 1)
+  const crossServiceErrors = await checkCrossServiceImpact(cwd, changedFiles);
+  errors.push(...crossServiceErrors);
 
   return new ValidatorResult({
     passed: errors.filter(e => e.severity === "error").length === 0,
@@ -105,7 +109,6 @@ function findSourceFiles(cwd, maxDepth = 3) {
 
   function scan(dir, depth) {
     if (depth > maxDepth) return;
-    const { readdirSync, statSync } = require("fs");
     const entries = readdirSync(dir);
     for (const entry of entries) {
       if (SKIP.includes(entry)) continue;
@@ -183,4 +186,49 @@ function resolveImport(baseDir, importPath) {
     if (existsSync(full + ext)) return full + ext;
   }
   return null;
+}
+
+async function checkCrossServiceImpact(cwd, changedFiles) {
+  const errors = [];
+
+  try {
+    const { trackCrossServiceContracts } = await import("../lib/cross-service-tracker.js");
+    const result = trackCrossServiceContracts(cwd);
+
+    for (const risk of result.risks) {
+      if (risk.severity === "warning") {
+        errors.push(new ValidatorError({
+          file: risk.target,
+          line: 0,
+          rule: "cross-service-high-coupling",
+          message: risk.reason,
+          ai_hint: "Coordinate contract changes with all consumer services. Consider versioning the API.",
+          severity: "warning",
+        }));
+      }
+    }
+
+    for (const file of changedFiles) {
+      const isContractFile = file.includes("openapi") || file.includes("swagger") ||
+        file.endsWith(".proto") || file.endsWith(".graphql") || file.endsWith(".gql");
+
+      if (isContractFile) {
+        const consumers = result.consumers.filter(c =>
+          result.graph.edges.some(e => e.from === c.file)
+        );
+        if (consumers.length > 0) {
+          errors.push(new ValidatorError({
+            file: file,
+            line: 0,
+            rule: "cross-service-contract-changed",
+            message: `Contract file "${file}" was modified. ${consumers.length} consumer(s) may be affected.`,
+            ai_hint: `Consumers: ${consumers.slice(0, 5).map(c => c.file).join(", ")}. Verify all consumers are updated.`,
+            severity: "warning",
+          }));
+        }
+      }
+    }
+  } catch {}
+
+  return errors;
 }

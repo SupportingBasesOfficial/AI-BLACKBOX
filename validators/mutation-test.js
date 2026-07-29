@@ -1,6 +1,6 @@
 // validators/mutation-test.js — Runs mutation testing if available
 
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import { ValidatorResult, ValidatorError } from "../lib/validator-contract.js";
@@ -72,7 +72,7 @@ export async function run(files, config = {}) {
 function detectMutationFramework(cwd) {
   // Stryker (JS/TS)
   try {
-    const pkg = JSON.parse(require("fs").readFileSync(join(cwd, "package.json"), "utf-8"));
+    const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf-8"));
     if (pkg.devDependencies?.["@stryker-mutator/core"] || pkg.dependencies?.["@stryker-mutator/core"]) {
       const mutateFlag = pkg.stryker?.mutate ? `--mutate "${pkg.stryker.mutate}"` : "";
       return {

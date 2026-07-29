@@ -1,6 +1,6 @@
 // validators/property-tests.js — Runs property-based tests if available
 
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import { ValidatorResult, ValidatorError } from "../lib/validator-contract.js";
@@ -65,14 +65,14 @@ function detectPropertyTestFramework(cwd) {
   // hypothesis (Python)
   if (existsSync(join(cwd, "node_modules"))) {}
   try {
-    const pkg = JSON.parse(require("fs").readFileSync(join(cwd, "package.json"), "utf-8"));
+    const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf-8"));
     if (pkg.dependencies?.["fast-check"] || pkg.devDependencies?.["fast-check"]) {
       return { command: "npx vitest run --grep property 2>&1 || true", parse: parseVitestProperty };
     }
   } catch {}
   if (existsSync(join(cwd, "requirements.txt"))) {
     try {
-      const reqs = require("fs").readFileSync(join(cwd, "requirements.txt"), "utf-8");
+      const reqs = readFileSync(join(cwd, "requirements.txt"), "utf-8");
       if (reqs.includes("hypothesis")) {
         return { command: "python -m pytest -v -k property 2>&1 || true", parse: parsePytestProperty };
       }
@@ -80,7 +80,7 @@ function detectPropertyTestFramework(cwd) {
   }
   if (existsSync(join(cwd, "Cargo.toml"))) {
     try {
-      const cargo = require("fs").readFileSync(join(cwd, "Cargo.toml"), "utf-8");
+      const cargo = readFileSync(join(cwd, "Cargo.toml"), "utf-8");
       if (cargo.includes("proptest")) {
         return { command: "cargo test --features proptest 2>&1 || true", parse: parseCargoProperty };
       }

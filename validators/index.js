@@ -1,40 +1,77 @@
-// validators/index.js — Central validator runner
+// validators/index.js — Central validator runner (v2)
+// Loads gates.json for validator lists, supports cache + progressive feedback
 
 import { existsSync, readFileSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { execSync } from "child_process";
 import { formatFeedback, aggregateResults, ValidatorResult } from "../lib/validator-contract.js";
 
-const PRE_COMMIT_VALIDATORS = [
-  "type-check",
-  "lint",
-  "doctrine-check",
-  "test",
-  "security-scan",
-];
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const PRE_PUSH_VALIDATORS = [
-  ...PRE_COMMIT_VALIDATORS,
-  "property-tests",
-  "impact-analysis",
-];
+const DEFAULT_GATES = {
+  "pre-commit": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check"],
+  "pre-push": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "property-tests", "impact-analysis", "schema-sync-check", "api-compat-check", "perf-budget-check"],
+  "ci": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "property-tests", "impact-analysis", "schema-sync-check", "api-compat-check", "perf-budget-check", "mutation-test"],
+  "timeout": { "pre-commit": 30, "pre-push": 120, "ci": 600 },
+};
 
-const CI_VALIDATORS = [
-  ...PRE_PUSH_VALIDATORS,
-  "mutation-test",
-];
+function loadGates() {
+  const gatesPath = join(dirname(__dirname), "gates.json");
+  if (existsSync(gatesPath)) {
+    try {
+      return JSON.parse(readFileSync(gatesPath, "utf-8"));
+    } catch {}
+  }
+  return DEFAULT_GATES;
+}
 
 export async function runValidators(gate, config = {}) {
-  const validatorList = gate === "pre-commit" ? PRE_COMMIT_VALIDATORS :
-                        gate === "pre-push" ? PRE_PUSH_VALIDATORS :
-                        CI_VALIDATORS;
+  const gates = loadGates();
+  let validatorList = gates[gate] || DEFAULT_GATES[gate] || [];
+
+  if (gate === "pre-push" && Array.isArray(validatorList)) {
+    const preCommit = gates["pre-commit"] || DEFAULT_GATES["pre-commit"];
+    validatorList = [...new Set([...preCommit, ...validatorList])];
+  }
+  if (gate === "ci" && Array.isArray(validatorList)) {
+    const prePush = gates["pre-push"] || DEFAULT_GATES["pre-push"];
+    const preCommit = gates["pre-commit"] || DEFAULT_GATES["pre-commit"];
+    validatorList = [...new Set([...preCommit, ...prePush, ...validatorList])];
+  }
 
   const results = [];
+  const cwd = config.cwd || process.cwd();
+  const files = getChangedFiles(cwd);
+
+  let cache = null;
+  try {
+    const { createCache } = await import("../lib/validator-cache.js");
+    cache = createCache(dirname(__dirname));
+  } catch {}
 
   for (const validatorName of validatorList) {
+    let allCached = files.length > 0;
+    if (cache && files.length > 0) {
+      for (const file of files) {
+        if (cache.hasChanged(file, validatorName)) {
+          allCached = false;
+          break;
+        }
+      }
+    } else {
+      allCached = false;
+    }
+
+    if (allCached) {
+      console.log(`  [CACHED] ${validatorName} (0ms, 0 errors)`);
+      results.push(new ValidatorResult({ passed: true, duration_ms: 0 }));
+      continue;
+    }
+
     try {
       const mod = await import(`./${validatorName}.js`);
-      const files = getChangedFiles(config.cwd || process.cwd());
-      const result = await mod.run(files, config);
+      const result = await mod.run(files, { ...config, cwd, zeroErrorDir: dirname(__dirname) });
       results.push(result);
 
       const status = result.passed ? "PASS" : "FAIL";
@@ -44,7 +81,18 @@ export async function runValidators(gate, config = {}) {
         for (const err of result.errors) {
           if (err.severity === "error") {
             console.error(`    ERROR: ${err.file}:${err.line} — ${err.message}`);
+            if (err.ai_hint) {
+              console.error(`           hint: ${err.ai_hint}`);
+            }
+          } else if (err.severity === "warning") {
+            console.warn(`    WARN:  ${err.file}:${err.line} — ${err.message}`);
           }
+        }
+      }
+
+      if (cache && files.length > 0) {
+        for (const file of files) {
+          cache.recordValidation(file, validatorName, result.passed, result.errors);
         }
       }
     } catch (err) {
@@ -57,19 +105,26 @@ export async function runValidators(gate, config = {}) {
     }
   }
 
+  if (cache) {
+    cache.flush();
+  }
+
   const aggregated = aggregateResults(results);
 
   if (!aggregated.passed) {
-    const feedback = formatFeedback(gate, validatorList
+    const failedValidators = validatorList
       .map((name, i) => ({ name, result: results[i] }))
-      .filter(({ result }) => !result.passed)
+      .filter(({ result }) => result && !result.passed)
       .map(({ name, result }) => ({
         validator: name,
         errors: result.errors.filter(e => e.severity === "error")
       }))
-      .filter(v => v.errors.length > 0)
-    );
-    console.error("\n" + feedback);
+      .filter(v => v.errors.length > 0);
+
+    if (failedValidators.length > 0) {
+      const feedback = formatFeedback(gate, failedValidators);
+      console.error("\n" + feedback);
+    }
   }
 
   return aggregated;
@@ -77,40 +132,34 @@ export async function runValidators(gate, config = {}) {
 
 function getChangedFiles(cwd) {
   try {
-    const { execSync } = require("child_process");
     const output = execSync("git diff --cached --name-only --diff-filter=ACMR", {
       cwd, encoding: "utf-8", timeout: 5000
     }).toString();
     return output.trim().split("\n").filter(f => f && !f.startsWith(".zero-error/"));
   } catch {
-    return [];
+    try {
+      const output = execSync("git diff --name-only", {
+        cwd, encoding: "utf-8", timeout: 5000
+      }).toString();
+      return output.trim().split("\n").filter(f => f && !f.startsWith(".zero-error/"));
+    } catch {
+      return [];
+    }
   }
 }
 
-export function loadConstitution(cwd = process.cwd()) {
-  const path = join(cwd, "CONSTITUTION.md");
-  if (!existsSync(path)) return {};
+export function loadGatesConfig() {
+  return loadGates();
+}
 
-  const content = readFileSync(path, "utf-8");
-  const config = {};
-
-  const requireTestsMatch = content.match(/requireTests:\s*(true|false)/);
-  if (requireTestsMatch) config.requireTests = requireTestsMatch[1] === "true";
-
-  const preCommitMatch = content.match(/preCommitTimeout:\s*(\d+)/);
-  if (preCommitMatch) config.preCommitTimeout = parseInt(preCommitMatch[1]);
-
-  const prePushMatch = content.match(/prePushTimeout:\s*(\d+)/);
-  if (prePushMatch) config.prePushTimeout = parseInt(prePushMatch[1]);
-
-  const ciMatch = content.match(/ciTimeout:\s*(\d+)/);
-  if (ciMatch) config.ciTimeout = parseInt(ciMatch[1]);
-
-  const mutationMatch = content.match(/mutationThreshold:\s*(\d+)/);
-  if (mutationMatch) config.mutationThreshold = parseInt(mutationMatch[1]);
-
-  const coverageMatch = content.match(/coverageThreshold:\s*(\d+)/);
-  if (coverageMatch) config.coverageThreshold = parseInt(coverageMatch[1]);
-
-  return config;
+// CLI entry point: node validators/index.js <gate>
+const __filename = fileURLToPath(import.meta.url);
+if (process.argv[1] && fileURLToPath(`file://${process.argv[1].replace(/\\/g, "/")}`) === __filename) {
+  const gate = process.argv[2] || "pre-commit";
+  runValidators(gate).then(result => {
+    process.exit(result.passed ? 0 : 1);
+  }).catch(err => {
+    console.error("Fatal error:", err.message);
+    process.exit(1);
+  });
 }

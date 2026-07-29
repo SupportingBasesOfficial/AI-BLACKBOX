@@ -1,7 +1,7 @@
 // validators/doctrine-check.js — The core Doctrine Checker validator
 
-import { readFileSync } from "fs";
-import { extname } from "path";
+import { readFileSync, existsSync } from "fs";
+import { extname, join } from "path";
 import { execSync } from "child_process";
 import { ValidatorResult, ValidatorError } from "../lib/validator-contract.js";
 
@@ -154,12 +154,69 @@ export async function run(files, config = {}) {
   }
 
   const errorCount = errors.filter(e => e.severity === "error").length;
+
+  const v2Errors = checkV2Rules(files, config);
+  errors.push(...v2Errors);
+
+  const finalErrorCount = errors.filter(e => e.severity === "error").length;
   return new ValidatorResult({
-    passed: errorCount === 0,
+    passed: finalErrorCount === 0,
     errors,
     warnings: errors.filter(e => e.severity === "warning"),
     duration_ms: Date.now() - startTime
   });
+}
+
+function checkV2Rules(files, config) {
+  const errors = [];
+  const zeroErrorDir = config.zeroErrorDir || join(process.cwd(), ".zero-error");
+
+  const systemRulesPath = join(zeroErrorDir, "system-rules.md");
+  if (existsSync(systemRulesPath)) {
+    const content = readFileSync(systemRulesPath, "utf-8");
+    if (!content.startsWith("Este reposit")) {
+      errors.push(new ValidatorError({
+        file: "system-rules.md",
+        line: 1,
+        rule: "preemption-command-missing",
+        message: "Preemption Command not found as first line of system-rules.md",
+        ai_hint: "Run: node init.js --force to regenerate system-rules.md with Preemption Command",
+        severity: "error",
+      }));
+    }
+  }
+
+  for (const file of files) {
+    const ext = extname(file).toLowerCase();
+    if (![".ts", ".js", ".tsx", ".jsx", ".py", ".go", ".java", ".rs"].includes(ext)) continue;
+
+    let content;
+    try {
+      content = readFileSync(file, "utf-8");
+    } catch {
+      continue;
+    }
+
+    if (!file.includes(".test.") && !file.includes(".spec.") && !file.includes("_test.")) {
+      const hasCodeBlocks = /function\s+\w+|=>\s*{|class\s+\w+/.test(content);
+      if (hasCodeBlocks) {
+        const hasCheckpoints = /\[CHECK:\s*[^\]]+\]/.test(content);
+        const hasAnchor = /@(ai-context|ai-restriction):/.test(content);
+        if (hasCodeBlocks && !hasCheckpoints && !hasAnchor) {
+          errors.push(new ValidatorError({
+            file: file,
+            line: 0,
+            rule: "checkpoint-missing-v2",
+            message: "Code changes without // [CHECK: rule] markers",
+            ai_hint: "Add // [CHECK: perf-budget], // [CHECK: error-handling], etc. at each logical block",
+            severity: "warning",
+          }));
+        }
+      }
+    }
+  }
+
+  return errors;
 }
 
 function getLineNumber(content, index) {
@@ -191,5 +248,3 @@ function countOccurrences(content, name) {
   const regex = new RegExp(`\\b${name}\\b`, "g");
   return (content.match(regex) || []).length;
 }
-
-import { existsSync } from "fs";

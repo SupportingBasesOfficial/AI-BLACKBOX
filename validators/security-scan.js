@@ -1,6 +1,6 @@
 // validators/security-scan.js — SAST + dependency audit + secrets scan
 
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import { ValidatorResult, ValidatorError } from "../lib/validator-contract.js";
@@ -67,7 +67,7 @@ async function scanSecrets(files, cwd) {
   for (const file of files) {
     let content;
     try {
-      content = require("fs").readFileSync(file, "utf-8");
+      content = readFileSync(file, "utf-8");
     } catch { continue; }
 
     for (const { pattern, name } of secretPatterns) {
