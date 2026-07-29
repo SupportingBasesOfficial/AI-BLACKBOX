@@ -7,6 +7,7 @@ import { existsSync, writeFileSync, copyFileSync, mkdirSync, readFileSync } from
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
+import { buildLexicalGlossary, generateGlossaryJson } from "./lib/lexical-glossary-builder.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const cwd = process.cwd();
@@ -67,7 +68,6 @@ async function main() {
 
   // Step 5: Generate tech-stack.json
   console.log(`  [5/21] Gerando tech-stack.json...`);
-  const { buildLexicalGlossary, generateGlossaryJson } = await import("./lib/lexical-glossary-builder.js");
   const glossaryResult = buildLexicalGlossary(cwd);
   const techStack = generateTechStack(cwd, languages, scanResult, glossaryResult);
   writeFileSync(join(__dirname, "tech-stack.json"), JSON.stringify(techStack, null, 2));
