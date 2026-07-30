@@ -45,30 +45,30 @@ Open your IDE. The AI now operates under the Doctrine. Zero configuration.
 
 | Validator | Gate | What it checks |
 |-----------|------|----------------|
-| `type-check` | pre-commit | Compiles and types are correct |
-| `lint` | pre-commit | Follows project conventions |
+| `type-check` | pre-commit | Compiles and types are correct (tsc, mypy, cargo check, go vet, mvn, sorbet, phpstan, swift build, dart analyze, cmake, mix compile, dotnet build) |
+| `lint` | pre-commit | Follows project conventions (ESLint, Ruff, GolangCI, Clippy, Rubocop, PHP-CS-Fixer, SwiftLint, Dart Analyze, Clang-Tidy, Credo, KTLint, Checkstyle) |
 | `doctrine-check` | pre-commit | No workarounds, direct path, certainty, Preemption Command, [CHECK:] markers |
-| `test` | pre-commit | All tests pass + critical path coverage |
-| `security-scan` | pre-commit | SAST + dependency scan + secrets scan |
+| `test` | pre-commit | All tests pass + critical path coverage (Vitest, Jest, Pytest, Cargo test, Go test, JUnit, RSpec, PHPUnit, XCTest, Flutter test, GTest, ExUnit) |
+| `security-scan` | pre-commit | SAST (Semgrep) + dependency audit (npm audit, pip-audit, cargo audit, govulncheck, bundle audit, composer audit, dotnet list package --vulnerable) + secrets scan (gitleaks) |
 | `contract-check` | pre-commit | Inter-module contracts respected |
 | `anchor-check` | pre-commit | @ai-context anchors consistent |
-| `tech-debt-check` | pre-commit | Phantom imports, orphan env vars, unused deps, missing @types |
-| `property-tests` | pre-push | Property-based invariants hold |
+| `tech-debt-check` | pre-commit | Phantom imports, orphan env vars, unused deps, missing @types, uncommitted critical files |
+| `property-tests` | pre-push | Property-based invariants hold (fast-check, hypothesis, proptest, gopter, jqwik, Kotest, ScalaCheck, SwiftCheck, stream_data, rantly) |
 | `impact-analysis` | pre-push | Change blast radius within threshold |
 | `schema-sync-check` | pre-push | ORM models match SQL migrations |
 | `api-compat-check` | pre-push | API backward compatibility |
 | `perf-budget-check` | pre-push | N+1 queries, unpaginated reads, SELECT *, await in loop |
-| `mutation-test` | CI | Tests detect mutations (test quality) |
+| `mutation-test` | CI | Tests detect mutations (Stryker, mutmut, cargo-mutants, gremlins, PIT, mutant, infection, Stryker.NET, Stryker4s) |
 
 ## Tech Debt Scanner
 
 The AI Black Box doesn't just scan what's right — it detects what's **invisible and wrong**:
 
-- **Phantom Imports**: `import pg from "pg"` in source code but `pg` not in any `package.json` — critical severity
+- **Phantom Imports**: `import pg from "pg"` in source code but `pg` not in any dependency file — critical severity
 - **Orphan Env Vars**: `process.env.DATABASE_URL` referenced in code but not declared in `.env` files — warning
-- **Unused Dependencies**: declared in `package.json` but never imported in any source file — info
-- **Missing Type Definitions**: package imported without `@types/` and no bundled types — info
-- **Uncommitted Critical Files**: env vars like `DATABASE_URL` not detected — the file referencing them may be uncommitted
+- **Unused Dependencies**: declared in a dependency file but never imported in any source file — info
+- **Missing Type Definitions**: JS/TS package imported without `@types/` and no bundled types — info
+- **Uncommitted Critical Files**: env vars like `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `AWS_ACCESS_KEY_ID`, etc. referenced in code but the file may be uncommitted — critical severity
 
 Generates `tech-debt-report.json` + `tech-debt-report.md` on every scan. Critical findings block pre-commit. The `tech-debt-check` validator enforces this gate.
 
@@ -91,7 +91,22 @@ Cursor, Windsurf, Cline, VS Code (Copilot), JetBrains, Neovim, Aider — auto-de
 
 ## Supported Languages
 
-TypeScript/JS, Python, Rust, Go, Java, Kotlin, Scala, Groovy, C#, Ruby, PHP, Swift, Dart, C/C++, Elixir — 15 languages with per-language validators, route detection, schema extraction, component detection, env var scanning, and tech debt analysis.
+TypeScript/JS, Python, Rust, Go, Java, Kotlin, Scala, Groovy, C#, Ruby, PHP, Swift, Dart, C/C++, Elixir — 15 languages with full stack coverage:
+
+- **Route Detection**: Express, Fastify, NestJS, Next.js, Rails, Spring Boot, ASP.NET, Flask, Gin, Echo, Phoenix, Actix, Axum, Polka, Hapi
+- **Component Detection**: React, Vue, Svelte, Solid, Angular, Flutter, SwiftUI, Blazor, Web Components, styled-components, MUI, Tailwind Variants
+- **Schema Extraction**: Prisma, TypeORM, Sequelize, Mongoose, Django, SQLAlchemy, Pydantic, JPA, GORM, Entity Framework, ActiveRecord, Eloquent, Doctrine, Diesel, sqlx, CoreData, GRDB, Drift, Floor, Ecto, GraphQL, Supabase RLS, SQL migrations, Protobuf, OpenAPI/Swagger
+- **ORM Detection**: Prisma, TypeORM, Sequelize, Mongoose, Django ORM, SQLAlchemy, GORM, JPA, ActiveRecord, Eloquent, Ecto, Diesel, sqlx, Entity Framework, CoreData, Drift
+- **Architecture Mapping**: Ingress (controllers, routes, views, handlers, viewsets, gRPC, GraphQL), Logic Core (services, actions, interactors, rules, policies), State Store (models, entities, ORM, records, documents, collections)
+- **Monorepo Detection**: pnpm-workspace, turbo, lerna, nx, rush, go.work, Cargo workspace, multi-module Maven, pyproject workspace, composer, pubspec, Package.swift, CMakeLists.txt, mix.exs
+- **Dependency Parsing**: `package.json`, `requirements.txt`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `pom.xml`, `build.gradle`, `Gemfile`, `composer.json`, `pubspec.yaml`, `mix.exs`, `CMakeLists.txt`, `.csproj`
+- **Type Checkers**: tsc, mypy, cargo check, go vet, Maven, Sorbet, PHPStan, swift build, dart analyze, cmake, mix compile, dotnet build
+- **Linters**: ESLint, Ruff, GolangCI, Clippy, Rubocop, PHP-CS-Fixer, SwiftLint, Dart Analyze, Clang-Tidy, Credo, KTLint, Checkstyle
+- **Test Frameworks**: Vitest, Jest, Pytest, Cargo test, Go test, JUnit, RSpec, PHPUnit, XCTest, Flutter test, GTest, ExUnit
+- **Property Tests**: fast-check, hypothesis, proptest, gopter, jqwik, Kotest property, ScalaCheck, SwiftCheck, stream_data, rantly
+- **Mutation Testing**: Stryker, mutmut, cargo-mutants, gremlins, PIT, mutant, infection, Stryker.NET, Stryker4s
+- **Dependency Audit**: npm audit, pip-audit, cargo audit, govulncheck, bundle audit, composer audit, dotnet list package --vulnerable
+- **Version Detection**: node, npm, python, python3, go, rustc, cargo, java, ruby, php, swift, dart, elixir, kotlinc, gcc, g++, dotnet
 
 ## Project Structure
 
@@ -109,7 +124,7 @@ TypeScript/JS, Python, Rust, Go, Java, Kotlin, Scala, Groovy, C#, Ruby, PHP, Swi
 ├── code-standards.md    # Naming, anti-patterns, security
 ├── tech-debt-report.json # Phantom imports, orphan env vars, unused deps
 ├── tech-debt-report.md  # Human-readable tech debt report
-├── validators/          # 15 deterministic validators
+├── validators/          # 16 deterministic validators
 ├── lib/                 # Scanners, mappers, budget, cache
 ├── hooks/               # pre-commit, pre-push
 └── workflows/           # GitHub Actions CI
