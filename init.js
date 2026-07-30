@@ -288,6 +288,14 @@ function collectAllDeps(cwd, scanResult) {
     }
   }
 
+  if (scanResult.allScannedFiles) {
+    for (const filePath of scanResult.allScannedFiles) {
+      if (filePath.endsWith("/package.json") || filePath === "package.json") {
+        mergePkg(join(cwd, filePath));
+      }
+    }
+  }
+
   return allDeps;
 }
 
