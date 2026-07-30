@@ -221,20 +221,19 @@ async function main() {
 }
 
 function generateTechStack(cwd, languages, scanResult, glossaryResult) {
-  const pkgJsonPath = join(cwd, "package.json");
-  let pkgInfo = {};
-  if (existsSync(pkgJsonPath)) {
-    try { pkgInfo = JSON.parse(readFileSync(pkgJsonPath, "utf-8")); } catch {}
-  }
+  const allDeps = collectAllDeps(cwd, scanResult);
 
-  const deps = { ...pkgInfo.dependencies, ...pkgInfo.devDependencies };
   const criticalLibs = {};
-  for (const [name, version] of Object.entries(deps || {})) {
+  for (const [name, version] of Object.entries(allDeps)) {
     if (name.includes("prisma") || name.includes("typeorm") || name.includes("sequelize") ||
         name.includes("express") || name.includes("fastify") || name.includes("nestjs") ||
-        name.includes("react") || name.includes("vue") || name.includes("angular") ||
-        name.includes("next") || name.includes("redis") || name.includes("kafka") ||
-        name.includes("launchdarkly") || name.includes("unleash") || name.includes("zod")) {
+        name.includes("@nestjs") || name.includes("react") || name.includes("vue") || name.includes("angular") ||
+        name.includes("next") || name.includes("expo") || name.includes("redis") || name.includes("kafka") ||
+        name.includes("launchdarkly") || name.includes("unleash") || name.includes("zod") ||
+        name.includes("stripe") || name.includes("@supabase") || name.includes("pg") ||
+        name.includes("@fastify") || name.includes("turbo") || name.includes("vitest") ||
+        name.includes("typescript") || name.includes("passport") || name.includes("bcrypt") ||
+        name.includes("jsonwebtoken") || name.includes("@aws-sdk") || name.includes("aws-sdk")) {
       criticalLibs[name] = version;
     }
   }
@@ -247,7 +246,7 @@ function generateTechStack(cwd, languages, scanResult, glossaryResult) {
     },
     database: {
       engine: detectDbEngine(scanResult),
-      orm: detectOrm(scanResult, deps),
+      orm: detectOrm(scanResult, allDeps),
     },
     critical_libraries: criticalLibs,
     versions: {
@@ -260,6 +259,34 @@ function generateTechStack(cwd, languages, scanResult, glossaryResult) {
     monorepo_packages: scanResult.monorepoPackages,
     lexical_glossary: generateGlossaryJson(glossaryResult),
   };
+}
+
+function collectAllDeps(cwd, scanResult) {
+  const allDeps = {};
+
+  const rootPkgPath = join(cwd, "package.json");
+  if (existsSync(rootPkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(rootPkgPath, "utf-8"));
+      Object.assign(allDeps, pkg.dependencies || {});
+      Object.assign(allDeps, pkg.devDependencies || {});
+    } catch {}
+  }
+
+  if (scanResult.monorepo && scanResult.monorepoPackages.length > 0) {
+    for (const pkgInfo of scanResult.monorepoPackages) {
+      const pkgPath = join(cwd, pkgInfo.path, "package.json");
+      if (existsSync(pkgPath)) {
+        try {
+          const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+          Object.assign(allDeps, pkg.dependencies || {});
+          Object.assign(allDeps, pkg.devDependencies || {});
+        } catch {}
+      }
+    }
+  }
+
+  return allDeps;
 }
 
 function detectDbEngine(scanResult) {
