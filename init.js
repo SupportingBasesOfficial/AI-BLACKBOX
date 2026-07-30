@@ -233,7 +233,12 @@ function generateTechStack(cwd, languages, scanResult, glossaryResult) {
         name.includes("stripe") || name.includes("@supabase") || name.includes("pg") ||
         name.includes("@fastify") || name.includes("turbo") || name.includes("vitest") ||
         name.includes("typescript") || name.includes("passport") || name.includes("bcrypt") ||
-        name.includes("jsonwebtoken") || name.includes("@aws-sdk") || name.includes("aws-sdk")) {
+        name.includes("jsonwebtoken") || name.includes("@aws-sdk") || name.includes("aws-sdk") ||
+        name.includes("helmet") || name.includes("rate-limit") || name.includes("cors") ||
+        name.includes("winston") || name.includes("pino") || name.includes("axios") ||
+        name.includes("dayjs") || name.includes("date-fns") || name.includes("multer") ||
+        name.includes("swagger") || name.includes("openapi") || name.includes("graphql") ||
+        name.includes("bull") || name.includes("node-cron") || name.includes("agenda")) {
       criticalLibs[name] = version;
     }
   }
