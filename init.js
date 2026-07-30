@@ -269,25 +269,22 @@ function generateTechStack(cwd, languages, scanResult, glossaryResult) {
 function collectAllDeps(cwd, scanResult) {
   const allDeps = {};
 
-  const rootPkgPath = join(cwd, "package.json");
-  if (existsSync(rootPkgPath)) {
+  function mergePkg(pkgPath) {
+    if (!existsSync(pkgPath)) return;
     try {
-      const pkg = JSON.parse(readFileSync(rootPkgPath, "utf-8"));
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
       Object.assign(allDeps, pkg.dependencies || {});
       Object.assign(allDeps, pkg.devDependencies || {});
+      Object.assign(allDeps, pkg.peerDependencies || {});
+      Object.assign(allDeps, pkg.optionalDependencies || {});
     } catch {}
   }
 
+  mergePkg(join(cwd, "package.json"));
+
   if (scanResult.monorepo && scanResult.monorepoPackages.length > 0) {
     for (const pkgInfo of scanResult.monorepoPackages) {
-      const pkgPath = join(cwd, pkgInfo.path, "package.json");
-      if (existsSync(pkgPath)) {
-        try {
-          const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-          Object.assign(allDeps, pkg.dependencies || {});
-          Object.assign(allDeps, pkg.devDependencies || {});
-        } catch {}
-      }
+      mergePkg(join(cwd, pkgInfo.path, "package.json"));
     }
   }
 
