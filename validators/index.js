@@ -10,9 +10,9 @@ import { formatFeedback, aggregateResults, ValidatorResult } from "../lib/valida
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_GATES = {
-  "pre-commit": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check"],
-  "pre-push": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "property-tests", "impact-analysis", "schema-sync-check", "api-compat-check", "perf-budget-check"],
-  "ci": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "property-tests", "impact-analysis", "schema-sync-check", "api-compat-check", "perf-budget-check", "mutation-test"],
+  "pre-commit": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "tech-debt-check"],
+  "pre-push": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "tech-debt-check", "property-tests", "impact-analysis", "schema-sync-check", "api-compat-check", "perf-budget-check"],
+  "ci": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "tech-debt-check", "property-tests", "impact-analysis", "schema-sync-check", "api-compat-check", "perf-budget-check", "mutation-test"],
   "timeout": { "pre-commit": 30, "pre-push": 120, "ci": 600 },
 };
 

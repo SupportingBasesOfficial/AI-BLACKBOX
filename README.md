@@ -52,12 +52,25 @@ Open your IDE. The AI now operates under the Doctrine. Zero configuration.
 | `security-scan` | pre-commit | SAST + dependency scan + secrets scan |
 | `contract-check` | pre-commit | Inter-module contracts respected |
 | `anchor-check` | pre-commit | @ai-context anchors consistent |
+| `tech-debt-check` | pre-commit | Phantom imports, orphan env vars, unused deps, missing @types |
 | `property-tests` | pre-push | Property-based invariants hold |
 | `impact-analysis` | pre-push | Change blast radius within threshold |
 | `schema-sync-check` | pre-push | ORM models match SQL migrations |
 | `api-compat-check` | pre-push | API backward compatibility |
 | `perf-budget-check` | pre-push | N+1 queries, unpaginated reads, SELECT *, await in loop |
 | `mutation-test` | CI | Tests detect mutations (test quality) |
+
+## Tech Debt Scanner
+
+The AI Black Box doesn't just scan what's right — it detects what's **invisible and wrong**:
+
+- **Phantom Imports**: `import pg from "pg"` in source code but `pg` not in any `package.json` — critical severity
+- **Orphan Env Vars**: `process.env.DATABASE_URL` referenced in code but not declared in `.env` files — warning
+- **Unused Dependencies**: declared in `package.json` but never imported in any source file — info
+- **Missing Type Definitions**: package imported without `@types/` and no bundled types — info
+- **Uncommitted Critical Files**: env vars like `DATABASE_URL` not detected — the file referencing them may be uncommitted
+
+Generates `tech-debt-report.json` + `tech-debt-report.md` on every scan. Critical findings block pre-commit. The `tech-debt-check` validator enforces this gate.
 
 ## Supported IDEs
 
@@ -81,7 +94,9 @@ TypeScript/JS, Python, Rust, Go, Java, C# — validators configured per language
 ├── state-context.md     # Current state
 ├── blackbox-index.json  # Semantic index
 ├── code-standards.md    # Naming, anti-patterns, security
-├── validators/          # 14 deterministic validators
+├── tech-debt-report.json # Phantom imports, orphan env vars, unused deps
+├── tech-debt-report.md  # Human-readable tech debt report
+├── validators/          # 15 deterministic validators
 ├── lib/                 # Scanners, mappers, budget, cache
 ├── hooks/               # pre-commit, pre-push
 └── workflows/           # GitHub Actions CI

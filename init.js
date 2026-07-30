@@ -60,6 +60,15 @@ async function main() {
   const scanResult = scanProject(cwd);
   console.log(`         ${scanResult.totalFiles} ficheiros, ${scanResult.schemas.length} schemas, ${scanResult.routes.length} rotas, ${scanResult.models.length} models`);
 
+  // Step 3.5: Tech debt scan
+  console.log(`  [3.5/21] Escaneando débito técnico...`);
+  const { scanTechDebt, generateTechDebtReport } = await import("./lib/tech-debt-scanner.js");
+  const techDebtResult = scanTechDebt(cwd, scanResult);
+  writeFileSync(join(__dirname, "tech-debt-report.json"), JSON.stringify(techDebtResult, null, 2));
+  const techDebtMd = generateTechDebtReport(techDebtResult);
+  writeFileSync(join(__dirname, "tech-debt-report.md"), techDebtMd);
+  console.log(`         ${techDebtResult.summary.total_findings} findings (${techDebtResult.summary.critical} critical, ${techDebtResult.summary.warnings} warnings, ${techDebtResult.summary.info} info)`);
+
   // Step 4: Map architecture
   const { mapArchitecture, generateArchitectureMap } = await import("./lib/architecture-mapper.js");
   console.log(`  [4/21] Mapeando arquitetura...`);
@@ -75,7 +84,7 @@ async function main() {
 
   // Step 6: Generate source-of-truth.json
   console.log(`  [6/21] Gerando source-of-truth.json...`);
-  const sourceOfTruth = generateSourceOfTruth(scanResult);
+  const sourceOfTruth = generateSourceOfTruth(scanResult, techDebtResult);
   if (!isForce && existsSync(join(__dirname, "source-of-truth.json"))) {
     const existing = JSON.parse(readFileSync(join(__dirname, "source-of-truth.json"), "utf-8"));
     if (existing.project_integrity?.critical_paths_override) {
@@ -212,6 +221,10 @@ async function main() {
   console.log(`  ${flagResult.totalFlags} feature flags detectadas`);
   console.log(`  ${glossaryResult.totalTerms} termos no glossario lexical`);
   console.log(`  ${sourceOfTruth.project_integrity.critical_paths.length} critical paths`);
+  console.log(`  Tech debt: ${techDebtResult.summary.total_findings} findings (${techDebtResult.summary.critical} critical, ${techDebtResult.summary.warnings} warnings, ${techDebtResult.summary.info} info)`);
+  if (techDebtResult.summary.critical > 0) {
+    console.log("\n  ⚠  DÉBITO CRÍTICO DETECTADO — veja tech-debt-report.md");
+  }
   if (isV1Upgrade) {
     console.log("\n  Upgrade v1->v2 completo. O rules file foi atualizado com Preemption Command.");
   }
@@ -334,7 +347,7 @@ function detectVersion(tool) {
   }
 }
 
-function generateSourceOfTruth(scanResult) {
+function generateSourceOfTruth(scanResult, techDebtResult) {
   return {
     project_integrity: {
       monorepo: scanResult.monorepo,
@@ -345,6 +358,19 @@ function generateSourceOfTruth(scanResult) {
       critical_path_test_required: true,
       strict_ci_commands: {},
     },
+    tech_debt: techDebtResult ? {
+      summary: techDebtResult.summary,
+      critical_findings: techDebtResult.findings.filter(f => f.severity === "critical").map(f => ({
+        type: f.type,
+        package: f.package,
+        message: f.message,
+      })),
+      warning_findings: techDebtResult.findings.filter(f => f.severity === "warning").map(f => ({
+        type: f.type,
+        package: f.package || f.env_var,
+        message: f.message,
+      })),
+    } : null,
   };
 }
 
@@ -555,7 +581,7 @@ function generateBlackboxIndex(archMap, scanResult) {
 }
 
 function generateGatesConfig() {
-  const preCommit = ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check"];
+  const preCommit = ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "tech-debt-check"];
   const prePush = [...preCommit, "property-tests", "impact-analysis", "schema-sync-check", "api-compat-check", "perf-budget-check"];
   const ci = [...prePush, "mutation-test"];
   return {
