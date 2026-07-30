@@ -72,12 +72,18 @@ The AI Black Box doesn't just scan what's right — it detects what's **invisibl
 
 Generates `tech-debt-report.json` + `tech-debt-report.md` on every scan. Critical findings block pre-commit. The `tech-debt-check` validator enforces this gate.
 
-**Multi-language support**: TypeScript/JS, Python, Go, Rust, Java, C# — imports, env vars, and dependency files are parsed per-language:
-- **Python**: `import X`, `from X import Y`, `os.environ.get()`, `os.getenv()`, `requirements.txt`
-- **Go**: `import "pkg"`, `os.Getenv()`, `go.mod`
-- **Rust**: `use crate::X`, `std::env::var()`, `Cargo.toml`
-- **Java**: `import X;`, `System.getenv()`, `pom.xml`, `build.gradle`
-- **C#**: `using X;`, `Environment.GetEnvironmentVariable()`
+**Multi-language support** (15 languages): TypeScript/JS, Python, Go, Rust, Java, Kotlin, Scala, Groovy, C#, Ruby, PHP, Swift, Dart, C/C++, Elixir — imports, env vars, and dependency files are parsed per-language:
+- **Python**: `import X`, `from X import Y`, `os.environ.get()`, `os.getenv()` | `requirements.txt`, `pyproject.toml`
+- **Go**: `import "pkg"`, `os.Getenv()` | `go.mod`
+- **Rust**: `use crate::X`, `std::env::var()` | `Cargo.toml`
+- **Java/Kotlin/Scala/Groovy**: `import X;`, `System.getenv()` | `pom.xml`, `build.gradle`
+- **C#**: `using X;`, `Environment.GetEnvironmentVariable()` | `.csproj`
+- **Ruby**: `require "gem"`, `ENV["VAR"]` | `Gemfile`
+- **PHP**: `use Namespace\Class`, `$_ENV["VAR"]`, `getenv()` | `composer.json`
+- **Swift**: `import Module`, `ProcessInfo.environment` | `Package.swift`
+- **Dart**: `import "package:..."`, `Platform.environment` | `pubspec.yaml`
+- **C/C++**: `#include <header>`, `getenv()` | `CMakeLists.txt`
+- **Elixir**: `defmodule`, `System.get_env()` | `mix.exs`
 
 ## Supported IDEs
 
@@ -85,7 +91,7 @@ Cursor, Windsurf, Cline, VS Code (Copilot), JetBrains, Neovim, Aider — auto-de
 
 ## Supported Languages
 
-TypeScript/JS, Python, Rust, Go, Java, C# — validators configured per language.
+TypeScript/JS, Python, Rust, Go, Java, Kotlin, Scala, Groovy, C#, Ruby, PHP, Swift, Dart, C/C++, Elixir — validators configured per language.
 
 ## Project Structure
 
