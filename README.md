@@ -91,7 +91,7 @@ Cursor, Windsurf, Cline, VS Code (Copilot), JetBrains, Neovim, Aider — auto-de
 
 ## Supported Languages
 
-TypeScript/JS, Python, Rust, Go, Java, Kotlin, Scala, Groovy, C#, Ruby, PHP, Swift, Dart, C/C++, Elixir — validators configured per language.
+TypeScript/JS, Python, Rust, Go, Java, Kotlin, Scala, Groovy, C#, Ruby, PHP, Swift, Dart, C/C++, Elixir — 15 languages with per-language validators, route detection, schema extraction, component detection, env var scanning, and tech debt analysis.
 
 ## Project Structure
 
