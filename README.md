@@ -72,6 +72,13 @@ The AI Black Box doesn't just scan what's right — it detects what's **invisibl
 
 Generates `tech-debt-report.json` + `tech-debt-report.md` on every scan. Critical findings block pre-commit. The `tech-debt-check` validator enforces this gate.
 
+**Multi-language support**: TypeScript/JS, Python, Go, Rust, Java, C# — imports, env vars, and dependency files are parsed per-language:
+- **Python**: `import X`, `from X import Y`, `os.environ.get()`, `os.getenv()`, `requirements.txt`
+- **Go**: `import "pkg"`, `os.Getenv()`, `go.mod`
+- **Rust**: `use crate::X`, `std::env::var()`, `Cargo.toml`
+- **Java**: `import X;`, `System.getenv()`, `pom.xml`, `build.gradle`
+- **C#**: `using X;`, `Environment.GetEnvironmentVariable()`
+
 ## Supported IDEs
 
 Cursor, Windsurf, Cline, VS Code (Copilot), JetBrains, Neovim, Aider — auto-detected.
