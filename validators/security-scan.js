@@ -1,6 +1,6 @@
 // validators/security-scan.js — SAST + dependency audit + secrets scan
 
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import { ValidatorResult, ValidatorError } from "../lib/validator-contract.js";
@@ -111,9 +111,10 @@ async function auditDependencies(cwd) {
     } catch {}
   }
 
-  if (existsSync(join(cwd, "requirements.txt"))) {
+  if (existsSync(join(cwd, "requirements.txt")) || existsSync(join(cwd, "pyproject.toml"))) {
     try {
-      const output = execSync("pip-audit -r requirements.txt --format json 2>/dev/null || true", {
+      const reqArg = existsSync(join(cwd, "requirements.txt")) ? "-r requirements.txt" : "";
+      const output = execSync(`pip-audit ${reqArg} --format json 2>/dev/null || true`, {
         cwd, encoding: "utf-8", timeout: 30000
       });
       const audit = JSON.parse(output);
@@ -131,7 +132,106 @@ async function auditDependencies(cwd) {
     } catch {}
   }
 
+  if (existsSync(join(cwd, "Cargo.toml"))) {
+    try {
+      const output = execSync("cargo audit --json 2>/dev/null || true", {
+        cwd, encoding: "utf-8", timeout: 30000
+      });
+      const audit = JSON.parse(output);
+      for (const vuln of audit.vulnerabilities || []) {
+        errors.push(new ValidatorError({
+          file: "Cargo.toml", line: 0,
+          rule: "dependency-vulnerability",
+          message: `Vulnerabilidade em ${vuln.package.name}: ${vuln.advisory.id}`,
+          ai_hint: `Vulnerabilidade ${vuln.advisory.id} em ${vuln.package.name}. Atualize para uma versão segura.`,
+          severity: "error"
+        }));
+      }
+    } catch {}
+  }
+
+  if (existsSync(join(cwd, "go.mod"))) {
+    try {
+      const output = execSync("govulncheck ./... 2>&1 || true", {
+        cwd, encoding: "utf-8", timeout: 30000
+      });
+      const vulnPattern = /Vulnerability\s+#\d+\s+\n\s+([\s\S]*?)\n/g;
+      const matches = [...output.matchAll(/Vulnerability\s+#(\d+)[\s\S]*?Module:\s+(\S+)[\s\S]*?Found in:\s+(.+?)\n/g)];
+      for (const match of matches) {
+        errors.push(new ValidatorError({
+          file: "go.mod", line: 0,
+          rule: "dependency-vulnerability",
+          message: `Vulnerabilidade #${match[1]} em ${match[2]}`,
+          ai_hint: `Vulnerabilidade em ${match[2]} (encontrado em ${match[3]}). Atualize o módulo go.`,
+          severity: "error"
+        }));
+      }
+    } catch {}
+  }
+
+  if (existsSync(join(cwd, "Gemfile"))) {
+    try {
+      const output = execSync("bundle audit check 2>&1 || true", {
+        cwd, encoding: "utf-8", timeout: 30000
+      });
+      const matches = [...output.matchAll(/Name:\s+(\S+)[\s\S]*?Advisory:\s+(\S+)[\s\S]*?Criticality:\s+(High|Critical)/gi)];
+      for (const match of matches) {
+        errors.push(new ValidatorError({
+          file: "Gemfile", line: 0,
+          rule: "dependency-vulnerability",
+          message: `Vulnerabilidade ${match[2]} em ${match[1]}`,
+          ai_hint: `Vulnerabilidade ${match[2]} em ${match[1]}. Atualize a gem ou aplique a correção recomendada.`,
+          severity: "error"
+        }));
+      }
+    } catch {}
+  }
+
+  if (existsSync(join(cwd, "composer.json"))) {
+    try {
+      const output = execSync("composer audit --format json 2>/dev/null || true", {
+        cwd, encoding: "utf-8", timeout: 30000
+      });
+      const audit = JSON.parse(output);
+      for (const vuln of audit.advisories || []) {
+        errors.push(new ValidatorError({
+          file: "composer.json", line: 0,
+          rule: "dependency-vulnerability",
+          message: `Vulnerabilidade em ${vuln.package}: ${vuln.advisoryId}`,
+          ai_hint: `Vulnerabilidade ${vuln.advisoryId} em ${vuln.package}. Atualize o pacote composer.`,
+          severity: "error"
+        }));
+      }
+    } catch {}
+  }
+
+  if (existsSync(join(cwd, ".csproj")) || fileExistsWithExt(cwd, ".csproj")) {
+    try {
+      const output = execSync("dotnet list package --vulnerable 2>&1 || true", {
+        cwd, encoding: "utf-8", timeout: 30000
+      });
+      const matches = [...output.matchAll(/>\s+(\S+)\s+(\S+)\s+(\S+)\s+Critical|High/gi)];
+      for (const match of matches) {
+        errors.push(new ValidatorError({
+          file: match[1] || ".csproj", line: 0,
+          rule: "dependency-vulnerability",
+          message: `Vulnerabilidade em ${match[2]}: ${match[3]}`,
+          ai_hint: `Vulnerabilidade em ${match[2]}. Atualize o pacote NuGet.`,
+          severity: "error"
+        }));
+      }
+    } catch {}
+  }
+
   return errors;
+}
+
+function fileExistsWithExt(cwd, ext) {
+  try {
+    return readdirSync(cwd).some(f => f.endsWith(ext));
+  } catch {
+    return false;
+  }
 }
 
 async function runSAST(cwd) {

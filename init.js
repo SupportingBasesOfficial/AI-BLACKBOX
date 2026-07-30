@@ -237,30 +237,39 @@ function generateTechStack(cwd, languages, scanResult, glossaryResult) {
   const allDeps = collectAllDeps(cwd, scanResult);
 
   const criticalLibs = {};
+  const criticalKeywords = [
+    "prisma", "typeorm", "sequelize", "mongoose", "express", "fastify", "nestjs",
+    "@nestjs", "react", "vue", "angular", "next", "expo", "redis", "kafka",
+    "launchdarkly", "unleash", "zod", "stripe", "@supabase", "pg", "@fastify",
+    "turbo", "vitest", "typescript", "passport", "bcrypt", "jsonwebtoken",
+    "@aws-sdk", "aws-sdk", "helmet", "rate-limit", "cors", "winston", "pino",
+    "axios", "dayjs", "date-fns", "multer", "swagger", "openapi", "graphql",
+    "bull", "node-cron", "agenda",
+    "django", "flask", "fastapi", "sqlalchemy", "tortoise", "alembic",
+    "rails", "activerecord", "sidekiq", "puma", "sinatra",
+    "spring", "spring-boot", "hibernate", "jpa", "kotlin",
+    "gin", "echo", "fiber", "gorm", "chi", "mux",
+    "actix", "rocket", "axum", "tokio", "diesel", "sqlx", "serde",
+    "laravel", "symfony", "doctrine", "eloquent", "composer",
+    "phoenix", "ecto", "plug", "oban",
+    "flutter", "dart", "swift", "swiftui", "grpc", "protobuf", "proto",
+    "entityframework", "efcore", "xunit", "nunit",
+    "react-native", "svelte", "solid",
+  ];
   for (const [name, version] of Object.entries(allDeps)) {
-    if (name.includes("prisma") || name.includes("typeorm") || name.includes("sequelize") ||
-        name.includes("express") || name.includes("fastify") || name.includes("nestjs") ||
-        name.includes("@nestjs") || name.includes("react") || name.includes("vue") || name.includes("angular") ||
-        name.includes("next") || name.includes("expo") || name.includes("redis") || name.includes("kafka") ||
-        name.includes("launchdarkly") || name.includes("unleash") || name.includes("zod") ||
-        name.includes("stripe") || name.includes("@supabase") || name.includes("pg") ||
-        name.includes("@fastify") || name.includes("turbo") || name.includes("vitest") ||
-        name.includes("typescript") || name.includes("passport") || name.includes("bcrypt") ||
-        name.includes("jsonwebtoken") || name.includes("@aws-sdk") || name.includes("aws-sdk") ||
-        name.includes("helmet") || name.includes("rate-limit") || name.includes("cors") ||
-        name.includes("winston") || name.includes("pino") || name.includes("axios") ||
-        name.includes("dayjs") || name.includes("date-fns") || name.includes("multer") ||
-        name.includes("swagger") || name.includes("openapi") || name.includes("graphql") ||
-        name.includes("bull") || name.includes("node-cron") || name.includes("agenda")) {
-      criticalLibs[name] = version;
+    for (const keyword of criticalKeywords) {
+      if (name.toLowerCase().includes(keyword)) {
+        criticalLibs[name] = version;
+        break;
+      }
     }
   }
 
   return {
     environment: "auto-detected",
     core_languages: {
-      backend: languages.find(l => ["typescript", "javascript", "python", "go", "rust", "java", "csharp"].includes(l)) || "auto",
-      frontend: languages.find(l => ["typescript", "javascript"].includes(l)) || "auto",
+      backend: languages.find(l => ["typescript", "javascript", "python", "go", "rust", "java", "csharp", "kotlin", "scala", "groovy", "ruby", "php", "elixir", "c", "cpp"].includes(l)) || "auto",
+      frontend: languages.find(l => ["typescript", "javascript", "dart", "swift", "csharp", "kotlin"].includes(l)) || "auto",
     },
     database: {
       engine: detectDbEngine(scanResult),
@@ -271,7 +280,20 @@ function generateTechStack(cwd, languages, scanResult, glossaryResult) {
       node: detectVersion("node"),
       npm: detectVersion("npm"),
       python: detectVersion("python"),
+      python3: detectVersion("python3"),
       go: detectVersion("go"),
+      rust: detectVersion("rustc"),
+      cargo: detectVersion("cargo"),
+      java: detectVersion("java"),
+      ruby: detectVersion("ruby"),
+      php: detectVersion("php"),
+      swift: detectVersion("swift"),
+      dart: detectVersion("dart"),
+      elixir: detectVersion("elixir"),
+      kotlin: detectVersion("kotlinc"),
+      gcc: detectVersion("gcc"),
+      gpp: detectVersion("g++"),
+      dotnet: detectVersion("dotnet"),
     },
     monorepo: scanResult.monorepo,
     monorepo_packages: scanResult.monorepoPackages,
@@ -293,18 +315,172 @@ function collectAllDeps(cwd, scanResult) {
     } catch {}
   }
 
-  mergePkg(join(cwd, "package.json"));
+  function mergeRequirements(reqPath) {
+    if (!existsSync(reqPath)) return;
+    try {
+      const content = readFileSync(reqPath, "utf-8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("-")) continue;
+        const match = trimmed.match(/^([\w.-]+)/);
+        if (match) allDeps[match[1]] = trimmed.includes("==") ? trimmed.split("==")[1] : "latest";
+      }
+    } catch {}
+  }
+
+  function mergeCargo(cargoPath) {
+    if (!existsSync(cargoPath)) return;
+    try {
+      const content = readFileSync(cargoPath, "utf-8");
+      const depSection = content.match(/\[dependencies\]([\s\S]*?)(?:\[|$)/);
+      if (depSection) {
+        for (const line of depSection[1].split("\n")) {
+          const match = line.match(/^\s*([\w-]+)\s*=\s*["']([^"']+)["']/);
+          if (match) allDeps[match[1]] = match[2];
+        }
+      }
+    } catch {}
+  }
+
+  function mergeGoMod(goModPath) {
+    if (!existsSync(goModPath)) return;
+    try {
+      const content = readFileSync(goModPath, "utf-8");
+      const requireBlock = content.match(/require\s*\(([\s\S]*?)\)/);
+      const lines = requireBlock ? requireBlock[1].split("\n") : [];
+      for (const line of lines) {
+        const match = line.match(/^\s*([^\s]+)\s+([\w.-]+)/);
+        if (match && !match[1].startsWith("//")) allDeps[match[1]] = match[2];
+      }
+      const singleRequire = content.matchAll(/require\s+([^\s]+)\s+([\w.-]+)/g);
+      for (const m of singleRequire) allDeps[m[1]] = m[2];
+    } catch {}
+  }
+
+  function mergeGemfile(gemfilePath) {
+    if (!existsSync(gemfilePath)) return;
+    try {
+      const content = readFileSync(gemfilePath, "utf-8");
+      const gemMatches = content.matchAll(/^\s*gem\s+["']([^"']+)["'](?:\s*,\s*["']([^"']+)["'])?/gm);
+      for (const m of gemMatches) allDeps[m[1]] = m[2] || "latest";
+    } catch {}
+  }
+
+  function mergeComposer(composerPath) {
+    if (!existsSync(composerPath)) return;
+    try {
+      const pkg = JSON.parse(readFileSync(composerPath, "utf-8"));
+      Object.assign(allDeps, pkg.require || {});
+      Object.assign(allDeps, pkg["require-dev"] || {});
+    } catch {}
+  }
+
+  function mergePubspec(pubspecPath) {
+    if (!existsSync(pubspecPath)) return;
+    try {
+      const content = readFileSync(pubspecPath, "utf-8");
+      const depSection = content.match(/dependencies:\s*\n([\s\S]*?)(?:\n\S|$)/);
+      if (depSection) {
+        for (const line of depSection[1].split("\n")) {
+          const match = line.match(/^\s+([\w_]+):\s*\^?([\w.]+)/);
+          if (match) allDeps[match[1]] = match[2];
+        }
+      }
+    } catch {}
+  }
+
+  function mergeMixExs(mixPath) {
+    if (!existsSync(mixPath)) return;
+    try {
+      const content = readFileSync(mixPath, "utf-8");
+      const depMatches = content.matchAll(/\{\s*:([\w_]+),\s*["']([^"']+)["']/g);
+      for (const m of depMatches) allDeps[m[1]] = m[2];
+    } catch {}
+  }
+
+  function mergePom(pomPath) {
+    if (!existsSync(pomPath)) return;
+    try {
+      const content = readFileSync(pomPath, "utf-8");
+      const depMatches = content.matchAll(/<dependency>\s*<groupId>([^<]+)<\/groupId>\s*<artifactId>([^<]+)<\/artifactId>(?:\s*<version>([^<]+)<\/version>)?/g);
+      for (const m of depMatches) {
+        const key = m[2].includes(":") ? m[2] : `${m[1]}:${m[2]}`;
+        allDeps[key] = m[3] || "managed";
+      }
+    } catch {}
+  }
+
+  function mergeGradle(gradlePath) {
+    if (!existsSync(gradlePath)) return;
+    try {
+      const content = readFileSync(gradlePath, "utf-8");
+      const implMatches = content.matchAll(/(?:implementation|api|compileOnly|runtimeOnly)\s+['"]([^'":]+):([^'":]+):([^'"]+)['"]/g);
+      for (const m of implMatches) allDeps[`${m[1]}:${m[2]}`] = m[3];
+    } catch {}
+  }
+
+  function mergePyproject(tomlPath) {
+    if (!existsSync(tomlPath)) return;
+    try {
+      const content = readFileSync(tomlPath, "utf-8");
+      const depSection = content.match(/\[project\][\s\S]*?dependencies\s*=\s*\[([\s\S]*?)\]/);
+      if (depSection) {
+        for (const line of depSection[1].split("\n")) {
+          const match = line.match(/["']([\w.-]+)(?:[<>=!~][^"']*)?["']/);
+          if (match) allDeps[match[1]] = "latest";
+        }
+      }
+      const poetrySection = content.match(/\[tool\.poetry\.dependencies\]([\s\S]*?)(?:\[|$)/);
+      if (poetrySection) {
+        for (const line of poetrySection[1].split("\n")) {
+          const match = line.match(/^([\w.-]+)\s*=\s*["']?([^"'\n]+)?["']?/);
+          if (match && match[1] !== "python") allDeps[match[1]] = match[2] || "latest";
+        }
+      }
+    } catch {}
+  }
+
+  function scanAllDepFiles(dir) {
+    mergePkg(join(dir, "package.json"));
+    mergeRequirements(join(dir, "requirements.txt"));
+    mergePyproject(join(dir, "pyproject.toml"));
+    mergeCargo(join(dir, "Cargo.toml"));
+    mergeGoMod(join(dir, "go.mod"));
+    mergePom(join(dir, "pom.xml"));
+    mergeGradle(join(dir, "build.gradle"));
+    mergeGemfile(join(dir, "Gemfile"));
+    mergeComposer(join(dir, "composer.json"));
+    mergePubspec(join(dir, "pubspec.yaml"));
+    mergeMixExs(join(dir, "mix.exs"));
+  }
+
+  scanAllDepFiles(cwd);
 
   if (scanResult.monorepo && scanResult.monorepoPackages.length > 0) {
     for (const pkgInfo of scanResult.monorepoPackages) {
-      mergePkg(join(cwd, pkgInfo.path, "package.json"));
+      scanAllDepFiles(join(cwd, pkgInfo.path));
     }
   }
 
   if (scanResult.allScannedFiles) {
+    const depFileMap = {
+      "package.json": mergePkg,
+      "requirements.txt": mergeRequirements,
+      "pyproject.toml": mergePyproject,
+      "Cargo.toml": mergeCargo,
+      "go.mod": mergeGoMod,
+      "pom.xml": mergePom,
+      "build.gradle": mergeGradle,
+      "Gemfile": mergeGemfile,
+      "composer.json": mergeComposer,
+      "pubspec.yaml": mergePubspec,
+      "mix.exs": mergeMixExs,
+    };
     for (const filePath of scanResult.allScannedFiles) {
-      if (filePath.endsWith("/package.json") || filePath === "package.json") {
-        mergePkg(join(cwd, filePath));
+      for (const [depFile, merger] of Object.entries(depFileMap)) {
+        if (filePath.endsWith("/" + depFile) || filePath === depFile) {
+          merger(join(cwd, filePath));
+        }
       }
     }
   }
@@ -315,14 +491,27 @@ function collectAllDeps(cwd, scanResult) {
 function detectDbEngine(scanResult) {
   for (const schema of scanResult.schemas) {
     if (schema.type === "prisma_model") return "prisma";
-    if (schema.type === "sql_table") return "sql";
+    if (schema.type === "sql_table" || schema.type === "sql_migration") return "sql";
     if (schema.type === "proto_message") return "protobuf";
+    if (schema.type === "graphql_schema") return "graphql";
+    if (schema.type === "supabase_schema") return "supabase";
+    if (schema.type === "django_model") return "django-orm";
+    if (schema.type === "entity_model") return "entity";
+    if (schema.type === "db_schema") return "sql";
   }
   for (const model of scanResult.models) {
     if (model.orm === "django") return "django-orm";
     if (model.orm === "sqlalchemy") return "sqlalchemy";
     if (model.orm === "gorm") return "gorm";
     if (model.orm === "jpa") return "jpa";
+    if (model.orm === "activerecord") return "activerecord";
+    if (model.orm === "eloquent") return "eloquent";
+    if (model.orm === "entity_framework") return "entity-framework";
+    if (model.orm === "ecto") return "ecto";
+    if (model.orm === "diesel") return "diesel";
+    if (model.orm === "sqlx") return "sqlx";
+    if (model.orm === "coredata") return "coredata";
+    if (model.orm === "drift") return "drift";
   }
   return "auto";
 }
@@ -332,6 +521,15 @@ function detectOrm(scanResult, deps) {
     if (deps.prisma || deps["@prisma/client"]) return "prisma";
     if (deps.typeorm) return "typeorm";
     if (deps.sequelize) return "sequelize";
+    if (deps.mongoose) return "mongoose";
+    if (deps.django || deps.Django) return "django-orm";
+    if (deps.sqlalchemy || deps.SQLAlchemy) return "sqlalchemy";
+    if (deps.gorm) return "gorm";
+    if (deps.rails || deps.activerecord) return "activerecord";
+    if (deps.eloquent || deps.laravel) return "eloquent";
+    if (deps.ecto) return "ecto";
+    if (deps.diesel) return "diesel";
+    if (deps.sqlx) return "sqlx";
   }
   for (const model of scanResult.models) {
     if (model.orm) return model.orm;

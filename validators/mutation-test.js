@@ -1,6 +1,6 @@
 // validators/mutation-test.js — Runs mutation testing if available
 
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import { ValidatorResult, ValidatorError } from "../lib/validator-contract.js";
@@ -70,7 +70,6 @@ export async function run(files, config = {}) {
 }
 
 function detectMutationFramework(cwd) {
-  // Stryker (JS/TS)
   try {
     const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf-8"));
     if (pkg.devDependencies?.["@stryker-mutator/core"] || pkg.dependencies?.["@stryker-mutator/core"]) {
@@ -82,12 +81,11 @@ function detectMutationFramework(cwd) {
     }
   } catch {}
 
-  // mutmut (Python)
-  if (existsSync(join(cwd, "setup.cfg")) || existsSync(join(cwd, "mutmut_config.py"))) {
+  if (existsSync(join(cwd, "setup.cfg")) || existsSync(join(cwd, "mutmut_config.py")) ||
+      (existsSync(join(cwd, "pyproject.toml")) && readFileSync(join(cwd, "pyproject.toml"), "utf-8").includes("mutmut"))) {
     return { command: "mutmut run 2>&1 || true", parse: parseMutmut };
   }
 
-  // cargo-mutants (Rust)
   if (existsSync(join(cwd, "Cargo.toml"))) {
     try {
       execSync("cargo mutants --version 2>/dev/null", { encoding: "utf-8", timeout: 5000 });
@@ -95,7 +93,113 @@ function detectMutationFramework(cwd) {
     } catch {}
   }
 
+  if (existsSync(join(cwd, "go.mod"))) {
+    try {
+      execSync("gremlins --version 2>/dev/null", { encoding: "utf-8", timeout: 5000 });
+      return { command: "gremlins unleash 2>&1 || true", parse: parseGremlins };
+    } catch {}
+  }
+
+  if (existsSync(join(cwd, "pom.xml"))) {
+    try {
+      const pom = readFileSync(join(cwd, "pom.xml"), "utf-8");
+      if (pom.includes("pitest") || pom.includes("org.pitest")) {
+        return { command: "mvn org.pitest:pitest-maven:mutationCoverage -q 2>&1 || true", parse: parsePIT };
+      }
+    } catch {}
+  }
+
+  if (existsSync(join(cwd, "Gemfile"))) {
+    try {
+      const gemfile = readFileSync(join(cwd, "Gemfile"), "utf-8");
+      if (gemfile.includes("mutant")) {
+        return { command: "bundle exec mutant run 2>&1 || true", parse: parseMutant };
+      }
+    } catch {}
+  }
+
+  if (existsSync(join(cwd, "composer.json"))) {
+    try {
+      const composer = JSON.parse(readFileSync(join(cwd, "composer.json"), "utf-8"));
+      if (composer.require?.["infection/infection"] || composer["require-dev"]?.["infection/infection"]) {
+        return { command: "vendor/bin/infection --no-progress 2>&1 || true", parse: parseInfection };
+      }
+    } catch {}
+  }
+
+  if (existsSync(join(cwd, ".csproj")) || fileExistsWithExt(cwd, ".csproj")) {
+    try {
+      execSync("dotnet stryker --version 2>/dev/null", { encoding: "utf-8", timeout: 5000 });
+      return { command: "dotnet stryker 2>&1 || true", parse: parseStryker };
+    } catch {}
+  }
+
+  if (existsSync(join(cwd, "build.sbt")) || existsSync(join(cwd, "build.gradle.kts"))) {
+    try {
+      const buildFile = existsSync(join(cwd, "build.sbt")) ? readFileSync(join(cwd, "build.sbt"), "utf-8") : readFileSync(join(cwd, "build.gradle.kts"), "utf-8");
+      if (buildFile.includes("stryker4s")) {
+        return { command: "stryker4s 2>&1 || true", parse: parseStryker };
+      }
+    } catch {}
+  }
+
   return null;
+}
+
+function fileExistsWithExt(cwd, ext) {
+  try {
+    return readdirSync(cwd).some(f => f.endsWith(ext));
+  } catch {
+    return false;
+  }
+}
+
+function parseGremlins(output) {
+  const survivedMatch = output.match(/(\d+)\s+mutants\s+(?:survived|escaped)/i);
+  const killedMatch = output.match(/(\d+)\s+mutants\s+killed/i);
+  const survived = parseInt(survivedMatch?.[1] || 0);
+  const killed = parseInt(killedMatch?.[1] || 0);
+  const total = survived + killed;
+  const score = total > 0 ? Math.round((killed / total) * 100) : undefined;
+  return {
+    score,
+    survived: survived > 0 ? [{ mutator: "gremlins", file: "", line: 0 }] : []
+  };
+}
+
+function parsePIT(output) {
+  const scoreMatch = output.match(/mutation coverage\s*:\s*(\d+(?:\.\d+)?)%/i);
+  const score = scoreMatch ? parseFloat(scoreMatch[1]) : undefined;
+  const survivedMatch = output.match(/(\d+)\s+SURVIVED/i);
+  const survived = parseInt(survivedMatch?.[1] || 0);
+  return {
+    score,
+    survived: survived > 0 ? [{ mutator: "pit", file: "", line: 0 }] : []
+  };
+}
+
+function parseMutant(output) {
+  const survivedMatch = output.match(/(\d+)\s+alive/i);
+  const killedMatch = output.match(/(\d+)\s+killed/i);
+  const survived = parseInt(survivedMatch?.[1] || 0);
+  const killed = parseInt(killedMatch?.[1] || 0);
+  const total = survived + killed;
+  const score = total > 0 ? Math.round((killed / total) * 100) : undefined;
+  return {
+    score,
+    survived: survived > 0 ? [{ mutator: "mutant", file: "", line: 0 }] : []
+  };
+}
+
+function parseInfection(output) {
+  const scoreMatch = output.match(/mutation score indicator:\s*(\d+(?:\.\d+)?)\s*%/i);
+  const score = scoreMatch ? parseFloat(scoreMatch[1]) : undefined;
+  const survivedMatch = output.match(/(\d+)\s+escaped/i);
+  const survived = parseInt(survivedMatch?.[1] || 0);
+  return {
+    score,
+    survived: survived > 0 ? [{ mutator: "infection", file: "", line: 0 }] : []
+  };
 }
 
 function parseStryker(output) {

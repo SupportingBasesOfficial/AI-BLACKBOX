@@ -1,6 +1,6 @@
 // validators/type-check.js — Runs the appropriate type checker for the project's language
 
-import { existsSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import { ValidatorResult, ValidatorError } from "../lib/validator-contract.js";
@@ -93,7 +93,185 @@ function detectTypeChecker(cwd) {
       parse: parseGoVet
     };
   }
+  if (existsSync(join(cwd, "pom.xml")) || existsSync(join(cwd, "build.gradle")) || existsSync(join(cwd, "build.gradle.kts"))) {
+    return {
+      command: "mvn compile -q 2>&1 || true",
+      parse: parseMaven
+    };
+  }
+  if (existsSync(join(cwd, "Gemfile"))) {
+    return {
+      command: "bundle exec sorbet --no-error-count 2>&1 || true",
+      parse: parseSorbet
+    };
+  }
+  if (existsSync(join(cwd, "composer.json"))) {
+    return {
+      command: "vendor/bin/phpstan analyse --no-progress --error-format raw 2>&1 || true",
+      parse: parsePHPStan
+    };
+  }
+  if (existsSync(join(cwd, "Package.swift"))) {
+    return {
+      command: "swift build 2>&1 || true",
+      parse: parseSwift
+    };
+  }
+  if (existsSync(join(cwd, "pubspec.yaml"))) {
+    return {
+      command: "dart analyze --format json 2>&1 || true",
+      parse: parseDart
+    };
+  }
+  if (existsSync(join(cwd, "CMakeLists.txt"))) {
+    return {
+      command: "cmake --build build --target all 2>&1 || true",
+      parse: parseCMake
+    };
+  }
+  if (existsSync(join(cwd, "mix.exs"))) {
+    return {
+      command: "mix compile 2>&1 || true",
+      parse: parseMix
+    };
+  }
+  if (existsSync(join(cwd, ".csproj")) || fileExistsWithExt(cwd, ".csproj")) {
+    return {
+      command: "dotnet build --no-restore 2>&1 || true",
+      parse: parseDotnet
+    };
+  }
   return null;
+}
+
+function fileExistsWithExt(cwd, ext) {
+  try {
+    return readdirSync(cwd).some(f => f.endsWith(ext));
+  } catch {
+    return false;
+  }
+}
+
+function parseMaven(output) {
+  const errors = [];
+  for (const line of output.split("\n")) {
+    const match = line.match(/^\[ERROR\]\s*(.+?):\[(\d+),(\d+)\]\s*(.+)$/);
+    if (match) {
+      errors.push({
+        file: match[1], line: parseInt(match[2]),
+        rule: "maven", message: match[4],
+        ai_hint: `${match[4]} em ${match[1]}:${match[2]}. Corrija o erro de compilação.`
+      });
+    }
+  }
+  return errors;
+}
+
+function parseSorbet(output) {
+  const errors = [];
+  for (const line of output.split("\n")) {
+    const match = line.match(/^(.+?):(\d+):\s*-\s*(.+)$/);
+    if (match) {
+      errors.push({
+        file: match[1], line: parseInt(match[2]),
+        rule: "sorbet", message: match[3],
+        ai_hint: `${match[3]} em ${match[1]}:${match[2]}. Corrija o tipo.`
+      });
+    }
+  }
+  return errors;
+}
+
+function parsePHPStan(output) {
+  const errors = [];
+  for (const line of output.split("\n")) {
+    const match = line.match(/^(.+?):(\d+):\s*(.+)$/);
+    if (match) {
+      errors.push({
+        file: match[1], line: parseInt(match[2]),
+        rule: "phpstan", message: match[3],
+        ai_hint: `${match[3]} em ${match[1]}:${match[2]}. Corrija o tipo.`
+      });
+    }
+  }
+  return errors;
+}
+
+function parseSwift(output) {
+  const errors = [];
+  for (const line of output.split("\n")) {
+    const match = line.match(/^(.+?):(\d+):(\d+):\s*(error|warning):\s*(.+)$/);
+    if (match) {
+      errors.push({
+        file: match[1], line: parseInt(match[2]),
+        rule: "swiftc", message: match[5],
+        ai_hint: `${match[5]} em ${match[1]}:${match[2]}. Corrija o erro de compilação.`
+      });
+    }
+  }
+  return errors;
+}
+
+function parseDart(output) {
+  try {
+    const results = JSON.parse(output);
+    const errors = [];
+    for (const diag of results.diagnostics || []) {
+      errors.push({
+        file: diag.location?.file || "", line: diag.location?.range?.start?.line || 0,
+        rule: diag.code || "dart", message: diag.message || "",
+        ai_hint: `${diag.message} em ${diag.location?.file}. Corrija o erro.`
+      });
+    }
+    return errors;
+  } catch {
+    return [];
+  }
+}
+
+function parseCMake(output) {
+  const errors = [];
+  for (const line of output.split("\n")) {
+    const match = line.match(/^(.+?):(\d+):(\d+):\s*(error|fatal error):\s*(.+)$/);
+    if (match) {
+      errors.push({
+        file: match[1], line: parseInt(match[2]),
+        rule: "cmake", message: match[5],
+        ai_hint: `${match[5]} em ${match[1]}:${match[2]}. Corrija o erro de compilação.`
+      });
+    }
+  }
+  return errors;
+}
+
+function parseMix(output) {
+  const errors = [];
+  for (const line of output.split("\n")) {
+    const match = line.match(/^(.+?):(\d+):\s*(.+)$/);
+    if (match) {
+      errors.push({
+        file: match[1], line: parseInt(match[2]),
+        rule: "elixir", message: match[3],
+        ai_hint: `${match[3]} em ${match[1]}:${match[2]}. Corrija o erro de compilação.`
+      });
+    }
+  }
+  return errors;
+}
+
+function parseDotnet(output) {
+  const errors = [];
+  for (const line of output.split("\n")) {
+    const match = line.match(/^(.+?)\((\d+),(\d+)\):\s*(error|warning)\s+(.+)$/);
+    if (match) {
+      errors.push({
+        file: match[1], line: parseInt(match[2]),
+        rule: "dotnet", message: match[5],
+        ai_hint: `${match[5]} em ${match[1]}:${match[2]}. Corrija o erro de compilação.`
+      });
+    }
+  }
+  return errors;
 }
 
 function parseTSC(output) {
