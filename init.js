@@ -3,7 +3,7 @@
 // 21 steps + 3 modes: default, --update, --force
 // Zero IA calls. Pure scanning + file generation.
 
-import { existsSync, writeFileSync, copyFileSync, mkdirSync, readFileSync } from "fs";
+import { existsSync, writeFileSync, copyFileSync, mkdirSync, readFileSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
@@ -440,6 +440,36 @@ function collectAllDeps(cwd, scanResult) {
     } catch {}
   }
 
+  function mergeCsproj(csprojPath) {
+    if (!existsSync(csprojPath)) return;
+    try {
+      const content = readFileSync(csprojPath, "utf-8");
+      const depMatches = content.matchAll(/<PackageReference\s+Include=["']([^"']+)["']\s+Version=["']([^"']+)["']/g);
+      for (const m of depMatches) allDeps[m[1]] = m[2];
+    } catch {}
+  }
+
+  function mergeSwiftPackage(pkgPath) {
+    if (!existsSync(pkgPath)) return;
+    try {
+      const content = readFileSync(pkgPath, "utf-8");
+      const depMatches = content.matchAll(/\.package\s*\(\s*url:\s*["']([^"']+)["'].*?from:\s*["']([^"']+)["']/g);
+      for (const m of depMatches) {
+        const name = m[1].split("/").pop().replace(".git", "");
+        allDeps[name] = m[2];
+      }
+    } catch {}
+  }
+
+  function mergeCMake(cmakePath) {
+    if (!existsSync(cmakePath)) return;
+    try {
+      const content = readFileSync(cmakePath, "utf-8");
+      const depMatches = content.matchAll(/find_package\s*\(\s*(\w+)/g);
+      for (const m of depMatches) allDeps[m[1]] = "system";
+    } catch {}
+  }
+
   function scanAllDepFiles(dir) {
     mergePkg(join(dir, "package.json"));
     mergeRequirements(join(dir, "requirements.txt"));
@@ -448,10 +478,18 @@ function collectAllDeps(cwd, scanResult) {
     mergeGoMod(join(dir, "go.mod"));
     mergePom(join(dir, "pom.xml"));
     mergeGradle(join(dir, "build.gradle"));
+    mergeGradle(join(dir, "build.gradle.kts"));
     mergeGemfile(join(dir, "Gemfile"));
     mergeComposer(join(dir, "composer.json"));
     mergePubspec(join(dir, "pubspec.yaml"));
     mergeMixExs(join(dir, "mix.exs"));
+    mergeSwiftPackage(join(dir, "Package.swift"));
+    mergeCMake(join(dir, "CMakeLists.txt"));
+    try {
+      for (const f of readdirSync(dir)) {
+        if (f.endsWith(".csproj")) mergeCsproj(join(dir, f));
+      }
+    } catch {}
   }
 
   scanAllDepFiles(cwd);
@@ -475,12 +513,18 @@ function collectAllDeps(cwd, scanResult) {
       "composer.json": mergeComposer,
       "pubspec.yaml": mergePubspec,
       "mix.exs": mergeMixExs,
+      "build.gradle.kts": mergeGradle,
+      "Package.swift": mergeSwiftPackage,
+      "CMakeLists.txt": mergeCMake,
     };
     for (const filePath of scanResult.allScannedFiles) {
       for (const [depFile, merger] of Object.entries(depFileMap)) {
         if (filePath.endsWith("/" + depFile) || filePath === depFile) {
           merger(join(cwd, filePath));
         }
+      }
+      if (filePath.endsWith(".csproj")) {
+        mergeCsproj(join(cwd, filePath));
       }
     }
   }
