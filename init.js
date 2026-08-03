@@ -58,6 +58,7 @@ async function main() {
   const { scanProject } = await import("./lib/context-scanner.js");
   console.log(`  [3/21] Escaneamento profundo...`);
   const scanResult = scanProject(cwd);
+  scanResult._rootDir = cwd;
   console.log(`         ${scanResult.totalFiles} ficheiros, ${scanResult.schemas.length} schemas, ${scanResult.routes.length} rotas, ${scanResult.models.length} models`);
 
   // Step 3.5: Tech debt scan

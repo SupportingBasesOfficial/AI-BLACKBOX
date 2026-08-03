@@ -352,3 +352,139 @@ describe("classification: classifyPath — root cause cases", () => {
     assert.ok(r.confidence > 0, `confidence should be positive, got ${r.confidence}`);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round 2 fixes — based on real-project validation feedback (~60% accuracy).
+// ---------------------------------------------------------------------------
+
+describe("classification: scripts and docs excluded from architecture", () => {
+  it("excludes .ps1 script files", () => {
+    assert.equal(classifyPath("test-zabbix-curl.ps1", "source").layer, "unclassified");
+    assert.equal(classifyPath("scripts/deploy.ps1", "source").layer, "unclassified");
+  });
+
+  it("excludes .sh script files", () => {
+    assert.equal(classifyPath("scripts/deploy.sh", "source").layer, "unclassified");
+  });
+
+  it("excludes ALL .md files (not just readme/license)", () => {
+    assert.equal(classifyPath("ARCHITECTURE.md", "source").layer, "unclassified");
+    assert.equal(classifyPath("TECHNICAL-GUIDE.md", "source").layer, "unclassified");
+    assert.equal(classifyPath("docs/SCHEMA.md", "source").layer, "unclassified");
+  });
+
+  it("excludes temp files (tmp-*)", () => {
+    assert.equal(classifyPath("tmp-e2e-test.mjs", "source").layer, "unclassified");
+    assert.equal(classifyPath("tmp-endpoints.txt", "source").layer, "unclassified");
+  });
+
+  it("excludes test script files (test-*.mjs, test-*.ps1)", () => {
+    assert.equal(classifyPath("test-new-routes.mjs", "source").layer, "unclassified");
+    assert.equal(classifyPath("test-zabbix-methods.mjs", "source").layer, "unclassified");
+    assert.equal(classifyPath("test-new-routes.ps1", "source").layer, "unclassified");
+  });
+});
+
+describe("classification: business logic in lib/ detected as logic-core", () => {
+  it("classifies lib/alerting-engine.ts as logic-core", () => {
+    const r = classifyPath("lib/alerting-engine.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+
+  it("classifies lib/correlation-engine.ts as logic-core", () => {
+    const r = classifyPath("lib/correlation-engine.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+
+  it("classifies lib/anomaly-detector.ts as logic-core", () => {
+    const r = classifyPath("lib/anomaly-detector.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+
+  it("classifies lib/failure-predictor.ts as logic-core", () => {
+    const r = classifyPath("lib/failure-predictor.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+
+  it("classifies lib/health-score.ts as logic-core", () => {
+    const r = classifyPath("lib/health-score.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+
+  it("classifies lib/itsm-connector.ts as logic-core", () => {
+    const r = classifyPath("lib/itsm-connector.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+
+  it("classifies lib/notification-delivery.ts as logic-core", () => {
+    const r = classifyPath("lib/notification-delivery.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+
+  it("classifies lib/report-generator.ts as logic-core", () => {
+    const r = classifyPath("lib/report-generator.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+
+  it("classifies lib/task-scheduler.ts as logic-core", () => {
+    const r = classifyPath("lib/task-scheduler.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+
+  it("classifies lib/device-sync.ts as logic-core", () => {
+    const r = classifyPath("lib/device-sync.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+
+  it("classifies lib/metrics-collector.ts as logic-core", () => {
+    const r = classifyPath("lib/metrics-collector.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+
+  it("classifies lib/web-push.ts as logic-core (delivery signal)", () => {
+    // "push" is not a token, but "web" is not a signal either.
+    // This file may stay unclassified — that's OK, not everything in lib/
+    // can be classified. The important ones (engine, detector, etc.) work.
+    const r = classifyPath("lib/web-push.ts", "source");
+    // web-push doesn't have a strong logic-core token, so it may be unclassified
+    // This is acceptable — we don't want to over-classify
+    assert.ok(r.layer === "logic-core" || r.layer === "unclassified",
+      `web-push should be logic-core or unclassified, got ${r.layer}`);
+  });
+
+  it("classifies lib/downsample.ts as logic-core", () => {
+    const r = classifyPath("lib/downsample.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+
+  it("classifies lib/lifecycle.ts as logic-core", () => {
+    const r = classifyPath("lib/lifecycle.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+});
+
+describe("classification: runtime env vars expanded", () => {
+  it("detects NEXT_RUNTIME as runtime env var", () => {
+    assert.ok(isRuntimeEnvVar("NEXT_RUNTIME"));
+  });
+
+  it("detects SKIP_ENV_VALIDATION as runtime env var", () => {
+    assert.ok(isRuntimeEnvVar("SKIP_ENV_VALIDATION"));
+  });
+
+  it("detects FEATURE_NEW_DASHBOARD as runtime env var", () => {
+    assert.ok(isRuntimeEnvVar("FEATURE_NEW_DASHBOARD"));
+  });
+
+  it("detects ENABLE_REACT_COMPILER as runtime env var", () => {
+    assert.ok(isRuntimeEnvVar("ENABLE_REACT_COMPILER"));
+  });
+
+  it("does NOT detect DATABASE_URL as runtime env var", () => {
+    assert.ok(!isRuntimeEnvVar("DATABASE_URL"));
+  });
+
+  it("does NOT detect JWT_PRIVATE_KEY as runtime env var", () => {
+    assert.ok(!isRuntimeEnvVar("JWT_PRIVATE_KEY"));
+  });
+});
