@@ -1069,3 +1069,127 @@ describe("dependency graph: @repo/ only matches packages/", () => {
       "logic-core should NOT have edges to ingress — @repo/ must only match packages/");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round 10 fixes — normalizePath with .., Boundary 2 API-only, nested type stripping.
+// ---------------------------------------------------------------------------
+
+describe("delegation checker: relative imports with .. resolve correctly", () => {
+  let dotdotRoot;
+
+  before(() => {
+    dotdotRoot = mkdtempSync(join(tmpdir(), "zero-error-dotdot-"));
+    mkdirSync(join(dotdotRoot, "apps", "api", "src", "routes"), { recursive: true });
+    mkdirSync(join(dotdotRoot, "apps", "api", "src", "lib"), { recursive: true });
+
+    // Route imports with ../../lib/ pattern (common in nested route dirs)
+    writeFileSync(join(dotdotRoot, "apps", "api", "src", "routes", "correlation.ts"),
+      "import { correlate } from '../lib/correlation-engine';\nexport function GET() { return correlate(); }\n"
+    );
+    writeFileSync(join(dotdotRoot, "apps", "api", "src", "lib", "correlation-engine.ts"),
+      "export function correlate() { return []; }\n"
+    );
+  });
+
+  after(() => {
+    if (dotdotRoot && existsSync(dotdotRoot)) rmSync(dotdotRoot, { recursive: true, force: true });
+  });
+
+  it("resolves ../lib/correlation-engine import and does NOT flag as missing delegation", () => {
+    const scan = scanProject(dotdotRoot);
+    scan._rootDir = dotdotRoot;
+    const arch = mapArchitecture(scan);
+    const delegBoundary = arch.boundaries.find(b => b.rule.includes("delegate to Logic Core"));
+    assert.ok(delegBoundary);
+    const violationFiles = delegBoundary.violations.map(v => v.file);
+    assert.ok(!violationFiles.some(f => f.includes("correlation.ts")),
+      "correlation.ts imports ../lib/correlation-engine — should NOT be flagged");
+  });
+});
+
+describe("delegation checker: excludes Next.js pages (frontend)", () => {
+  let pagesRoot;
+
+  before(() => {
+    pagesRoot = mkdtempSync(join(tmpdir(), "zero-error-pages-"));
+    mkdirSync(join(pagesRoot, "apps", "web", "app", "dashboard"), { recursive: true });
+    mkdirSync(join(pagesRoot, "apps", "web", "app", "api", "users"), { recursive: true });
+    mkdirSync(join(pagesRoot, "apps", "api", "src", "lib"), { recursive: true });
+
+    // Next.js page (frontend) — should NOT be checked for delegation
+    writeFileSync(join(pagesRoot, "apps", "web", "app", "dashboard", "page.tsx"),
+      "export default function Page() { return <div>Dashboard</div>; }\n"
+    );
+    // API route that doesn't delegate — SHOULD be flagged
+    writeFileSync(join(pagesRoot, "apps", "web", "app", "api", "users", "route.ts"),
+      "export function GET() { return Response.json([]); }\n"
+    );
+  });
+
+  after(() => {
+    if (pagesRoot && existsSync(pagesRoot)) rmSync(pagesRoot, { recursive: true, force: true });
+  });
+
+  it("does NOT flag Next.js pages for missing delegation", () => {
+    const scan = scanProject(pagesRoot);
+    scan._rootDir = pagesRoot;
+    const arch = mapArchitecture(scan);
+    const delegBoundary = arch.boundaries.find(b => b.rule.includes("delegate to Logic Core"));
+    assert.ok(delegBoundary);
+    const violationFiles = delegBoundary.violations.map(v => v.file).filter(Boolean);
+    // page.tsx should NOT be in violations
+    assert.ok(!violationFiles.some(f => f.includes("page.tsx")),
+      "Next.js pages should NOT be checked for delegation to Logic Core");
+  });
+});
+
+describe("feature flag detector: strips nested type definitions", () => {
+  let nestedTypeRoot;
+
+  before(() => {
+    nestedTypeRoot = mkdtempSync(join(tmpdir(), "zero-error-nestedtype-"));
+    mkdirSync(join(nestedTypeRoot, "lib"), { recursive: true });
+
+    // Type with nested braces — should NOT be detected as flags
+    writeFileSync(join(nestedTypeRoot, "lib", "schema.ts"),
+      `export interface FeatureFlag {
+  id: string;
+  key: string;
+  name: string;
+  flag_type: string;
+  is_active: boolean;
+  config: {
+    nested: string;
+    features: {
+      id: string;
+      key: string;
+    };
+  };
+}
+
+export type FlagConfig = {
+  features: {
+    id: string;
+    key: string;
+    name: string;
+  };
+};
+`);
+  });
+
+  after(() => {
+    if (nestedTypeRoot && existsSync(nestedTypeRoot)) rmSync(nestedTypeRoot, { recursive: true, force: true });
+  });
+
+  it("does NOT detect nested type definition fields as feature flags", async () => {
+    const { detectFeatureFlags } = await import("../lib/feature-flag-detector.js");
+    const result = detectFeatureFlags(nestedTypeRoot);
+    const flagNames = result.flags.map(f => f.name);
+    // Should NOT contain any schema field names
+    for (const bad of ["id", "key", "name", "flag_type", "is_active", "nested", "config"]) {
+      assert.ok(!flagNames.includes(bad), `should not detect '${bad}' as a flag`);
+    }
+    // Should have zero flags from this type-only file
+    assert.equal(result.totalFlags, 0, "type-only file should produce zero flags");
+  });
+});
