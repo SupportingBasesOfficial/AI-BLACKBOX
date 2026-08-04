@@ -667,3 +667,84 @@ describe("classification: infrastructure packages in state-store", () => {
     assert.equal(r.layer, "state-store");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round 6 fixes — delegation analysis + connector directory-awareness.
+// ---------------------------------------------------------------------------
+
+describe("classification: connector token is directory-aware", () => {
+  it("classifies lib/itsm-connector.ts as logic-core/business (integration logic)", () => {
+    const r = classifyPath("lib/itsm-connector.ts", "source");
+    assert.equal(r.layer, "logic-core");
+    assert.equal(r.subtype, "business");
+  });
+
+  it("classifies lib/external-connector.ts as logic-core/business", () => {
+    const r = classifyPath("lib/external-connector.ts", "source");
+    assert.equal(r.layer, "logic-core");
+    assert.equal(r.subtype, "business");
+  });
+
+  it("classifies services/data-connector.ts as logic-core/business (in services/)", () => {
+    const r = classifyPath("services/data-connector.ts", "source");
+    assert.equal(r.layer, "logic-core");
+    assert.equal(r.subtype, "business");
+  });
+
+  it("classifies data/db-connector.ts as logic-core/data-access (in data/)", () => {
+    const r = classifyPath("data/db-connector.ts", "source");
+    assert.equal(r.layer, "logic-core");
+    assert.equal(r.subtype, "data-access");
+  });
+
+  it("classifies packages/db/src/connector.ts as state-store (infra pkg overrides connector)", () => {
+    // packages/db/ is an infrastructure package — the infra-pkg signal (weight 4)
+    // correctly classifies it as state-store, not logic-core, even with "connector" token
+    const r = classifyPath("packages/db/src/connector.ts", "source");
+    assert.equal(r.layer, "state-store");
+  });
+});
+
+describe("architecture-mapper: delegation boundary analysis", () => {
+  let delegRoot;
+
+  before(() => {
+    delegRoot = mkdtempSync(join(tmpdir(), "zero-error-deleg-"));
+
+    // Route that delegates to logic-core (imports from lib/)
+    mkdirSync(join(delegRoot, "routes"), { recursive: true });
+    mkdirSync(join(delegRoot, "lib"), { recursive: true });
+    writeFileSync(
+      join(delegRoot, "routes", "good-route.ts"),
+      "import { processOrder } from '../lib/order-processor';\nexport function GET() { return processOrder(); }\n"
+    );
+    writeFileSync(
+      join(delegRoot, "lib", "order-processor.ts"),
+      "export function processOrder() { return { ok: true }; }\n"
+    );
+
+    // Route that does NOT delegate (inline logic, no lib/ import)
+    writeFileSync(
+      join(delegRoot, "routes", "bad-route.ts"),
+      "export function GET() {\n  const result = doEverythingInline();\n  return result;\n}\nfunction doEverythingInline() { return { ok: false }; }\n"
+    );
+  });
+
+  after(() => {
+    if (delegRoot && existsSync(delegRoot)) rmSync(delegRoot, { recursive: true, force: true });
+  });
+
+  it("detects routes that don't delegate to Logic Core as violations", () => {
+    const scan = scanProject(delegRoot);
+    scan._rootDir = delegRoot;
+    const arch = mapArchitecture(scan);
+    const delegBoundary = arch.boundaries.find(b => b.rule.includes("delegate to Logic Core"));
+    assert.ok(delegBoundary, "delegation boundary must exist");
+
+    const violationFiles = delegBoundary.violations.map(v => v.file);
+    assert.ok(violationFiles.includes("routes/bad-route.ts"),
+      "bad-route.ts (no lib/ import) should be flagged as not delegating");
+    assert.ok(!violationFiles.includes("routes/good-route.ts"),
+      "good-route.ts (imports from lib/) should NOT be flagged");
+  });
+});
