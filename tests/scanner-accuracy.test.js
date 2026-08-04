@@ -1521,3 +1521,127 @@ describe("tech debt: unused exports detection", () => {
     assert.ok(!liveCodeFinding, "should NOT flag live-code.ts (it is imported)");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round 14 fixes — unused exports: @/ alias resolution, Next.js conventions, config files
+// ---------------------------------------------------------------------------
+
+describe("unused exports: @/ path alias resolution via tsconfig.json", () => {
+  let aliasRoot;
+
+  before(() => {
+    aliasRoot = mkdtempSync(join(tmpdir(), "zero-error-alias-export-"));
+    mkdirSync(join(aliasRoot, "apps/web/components"), { recursive: true });
+    mkdirSync(join(aliasRoot, "apps/web/app/dashboard"), { recursive: true });
+
+    // tsconfig.json with @/ → ./apps/web/ mapping
+    writeFileSync(join(aliasRoot, "tsconfig.json"), JSON.stringify({
+      compilerOptions: {
+        baseUrl: ".",
+        paths: { "@/*": ["apps/web/*"] },
+      },
+    }));
+
+    // Component imported via @/ alias
+    writeFileSync(join(aliasRoot, "apps/web/components/widget.tsx"),
+      "export function Widget() { return null; }\n");
+    // Page that imports it via @/components/widget
+    writeFileSync(join(aliasRoot, "apps/web/app/dashboard/page.tsx"),
+      "import { Widget } from '@/components/widget';\nexport default function Page() { return <Widget/>; }\n");
+
+    // Dead code — never imported
+    writeFileSync(join(aliasRoot, "apps/web/components/dead-widget.tsx"),
+      "export function DeadWidget() { return null; }\n");
+  });
+
+  after(() => {
+    if (aliasRoot && existsSync(aliasRoot)) rmSync(aliasRoot, { recursive: true, force: true });
+  });
+
+  it("does NOT flag files imported via @/ path alias", () => {
+    const scan = { _rootDir: aliasRoot, allScannedFiles: [], monorepo: false, envVars: [] };
+    const result = scanTechDebt(aliasRoot, scan);
+    const unusedFindings = result.findings.filter(f => f.type === "unused_export");
+    // Look for widget.tsx specifically (not dead-widget.tsx)
+    const widgetFinding = unusedFindings.find(f => f.file === "apps/web/components/widget.tsx");
+    assert.ok(!widgetFinding,
+      "widget.tsx is imported via @/components/widget — should NOT be flagged as unused");
+  });
+
+  it("DOES flag genuinely dead code even with aliases present", () => {
+    const scan = { _rootDir: aliasRoot, allScannedFiles: [], monorepo: false, envVars: [] };
+    const result = scanTechDebt(aliasRoot, scan);
+    const unusedFindings = result.findings.filter(f => f.type === "unused_export");
+    const deadFinding = unusedFindings.find(f => f.file.includes("dead-widget"));
+    assert.ok(deadFinding,
+      "dead-widget.tsx is never imported — should be flagged as unused");
+  });
+});
+
+describe("unused exports: filters Next.js convention files", () => {
+  let nextjsRoot;
+
+  before(() => {
+    nextjsRoot = mkdtempSync(join(tmpdir(), "zero-error-nextjs-conv-"));
+    mkdirSync(join(nextjsRoot, "app/dashboard"), { recursive: true });
+
+    // Next.js convention files — auto-discovered by framework, never imported
+    writeFileSync(join(nextjsRoot, "app/dashboard/loading.tsx"),
+      "export default function Loading() { return <div>Loading</div>; }\n");
+    writeFileSync(join(nextjsRoot, "app/dashboard/error.tsx"),
+      "export default function Error() { return <div>Error</div>; }\n");
+    writeFileSync(join(nextjsRoot, "app/dashboard/not-found.tsx"),
+      "export default function NotFound() { return <div>404</div>; }\n");
+    writeFileSync(join(nextjsRoot, "app/robots.ts"),
+      "export default function robots() { return {}; }\n");
+    writeFileSync(join(nextjsRoot, "app/sitemap.ts"),
+      "export default function sitemap() { return []; }\n");
+  });
+
+  after(() => {
+    if (nextjsRoot && existsSync(nextjsRoot)) rmSync(nextjsRoot, { recursive: true, force: true });
+  });
+
+  it("does NOT flag Next.js convention files as unused exports", () => {
+    const scan = { _rootDir: nextjsRoot, allScannedFiles: [], monorepo: false, envVars: [] };
+    const result = scanTechDebt(nextjsRoot, scan);
+    const unusedFindings = result.findings.filter(f => f.type === "unused_export");
+    const conventionFindings = unusedFindings.filter(f =>
+      f.file.includes("loading.tsx") || f.file.includes("error.tsx") ||
+      f.file.includes("not-found.tsx") || f.file.includes("robots.ts") ||
+      f.file.includes("sitemap.ts"));
+    assert.equal(conventionFindings.length, 0,
+      "Next.js convention files should NOT be flagged as unused exports");
+  });
+});
+
+describe("unused exports: filters config files", () => {
+  let configRoot;
+
+  before(() => {
+    configRoot = mkdtempSync(join(tmpdir(), "zero-error-config-"));
+
+    // Config files — not imported by application code
+    writeFileSync(join(configRoot, "eslint.config.mjs"),
+      "export default { rules: {} };\n");
+    writeFileSync(join(configRoot, "vitest.config.ts"),
+      "export default { test: {} };\n");
+    writeFileSync(join(configRoot, "next.config.js"),
+      "export default { reactStrictMode: true };\n");
+  });
+
+  after(() => {
+    if (configRoot && existsSync(configRoot)) rmSync(configRoot, { recursive: true, force: true });
+  });
+
+  it("does NOT flag config files as unused exports", () => {
+    const scan = { _rootDir: configRoot, allScannedFiles: [], monorepo: false, envVars: [] };
+    const result = scanTechDebt(configRoot, scan);
+    const unusedFindings = result.findings.filter(f => f.type === "unused_export");
+    const configFindings = unusedFindings.filter(f =>
+      f.file.includes("eslint.config") || f.file.includes("vitest.config") ||
+      f.file.includes("next.config"));
+    assert.equal(configFindings.length, 0,
+      "Config files should NOT be flagged as unused exports");
+  });
+});
