@@ -933,3 +933,139 @@ describe("feature 11: dependency graph between layers", () => {
       "map should show layer names in graph");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round 9 fixes — feature flag false positive, @/ path alias, @repo/ matching.
+// ---------------------------------------------------------------------------
+
+describe("feature flag detector: excludes TypeScript type definitions", () => {
+  let flagRoot;
+
+  before(() => {
+    flagRoot = mkdtempSync(join(tmpdir(), "zero-error-flag-"));
+    mkdirSync(join(flagRoot, "lib"), { recursive: true });
+
+    // TypeScript interface that should NOT be detected as feature flags
+    writeFileSync(join(flagRoot, "lib", "types.ts"),
+      `export interface FeatureFlag {
+  id: string;
+  key: string;
+  name: string;
+  flag_type: string;
+  is_active: boolean;
+  created_at: Date;
+}
+
+export type FlagConfig = {
+  features: {
+    id: string;
+    key: string;
+  };
+};
+`);
+
+    // Real feature flag usage that SHOULD be detected
+    writeFileSync(join(flagRoot, "lib", "flags.ts"),
+      `if (process.env.FEATURE_NEW_DASHBOARD === 'true') {
+  enableNewDashboard();
+}
+`);
+  });
+
+  after(() => {
+    if (flagRoot && existsSync(flagRoot)) rmSync(flagRoot, { recursive: true, force: true });
+  });
+
+  it("does NOT detect TypeScript type fields as feature flags", async () => {
+    const { detectFeatureFlags } = await import("../lib/feature-flag-detector.js");
+    const result = detectFeatureFlags(flagRoot);
+    const flagNames = result.flags.map(f => f.name);
+    // Should NOT contain schema field names like "id", "key", "name"
+    assert.ok(!flagNames.includes("id"), "should not detect 'id' as a flag");
+    assert.ok(!flagNames.includes("key"), "should not detect 'key' as a flag");
+    assert.ok(!flagNames.includes("name"), "should not detect 'name' as a flag");
+    assert.ok(!flagNames.includes("flag_type"), "should not detect 'flag_type' as a flag");
+  });
+
+  it("DOES detect real feature flags from env vars", async () => {
+    const { detectFeatureFlags } = await import("../lib/feature-flag-detector.js");
+    const result = detectFeatureFlags(flagRoot);
+    const flagNames = result.flags.map(f => f.name);
+    assert.ok(flagNames.some(n => n.includes("NEW_DASHBOARD")),
+      "should detect FEATURE_NEW_DASHBOARD");
+  });
+});
+
+describe("delegation checker: @/ path alias support", () => {
+  let aliasRoot;
+
+  before(() => {
+    aliasRoot = mkdtempSync(join(tmpdir(), "zero-error-alias-"));
+    mkdirSync(join(aliasRoot, "apps", "api", "src", "routes"), { recursive: true });
+    mkdirSync(join(aliasRoot, "apps", "api", "src", "lib"), { recursive: true });
+
+    // Route uses @/ path alias to import from lib/
+    writeFileSync(join(aliasRoot, "apps", "api", "src", "routes", "correlation.ts"),
+      "import { correlate } from '@/lib/correlation-engine';\nexport function GET() { return correlate(); }\n"
+    );
+    writeFileSync(join(aliasRoot, "apps", "api", "src", "lib", "correlation-engine.ts"),
+      "export function correlate() { return []; }\n"
+    );
+  });
+
+  after(() => {
+    if (aliasRoot && existsSync(aliasRoot)) rmSync(aliasRoot, { recursive: true, force: true });
+  });
+
+  it("recognizes @/ path alias as delegation to Logic Core", () => {
+    const scan = scanProject(aliasRoot);
+    scan._rootDir = aliasRoot;
+    const arch = mapArchitecture(scan);
+    const delegBoundary = arch.boundaries.find(b => b.rule.includes("delegate to Logic Core"));
+    assert.ok(delegBoundary);
+    const violationFiles = delegBoundary.violations.map(v => v.file);
+    assert.ok(!violationFiles.some(f => f.includes("correlation.ts")),
+      "correlation.ts uses @/lib/correlation-engine — should NOT be flagged as not delegating");
+  });
+});
+
+describe("dependency graph: @repo/ only matches packages/", () => {
+  let pkgRoot;
+
+  before(() => {
+    pkgRoot = mkdtempSync(join(tmpdir(), "zero-error-pkgmatch-"));
+    mkdirSync(join(pkgRoot, "apps", "api", "src", "lib"), { recursive: true });
+    mkdirSync(join(pkgRoot, "apps", "web", "app", "api", "zabbix", "ping"), { recursive: true });
+    mkdirSync(join(pkgRoot, "packages", "logger", "src"), { recursive: true });
+
+    // Logic core file imports @repo/logger — should match packages/logger, NOT
+    // any file that happens to have "logger" in its path
+    writeFileSync(join(pkgRoot, "apps", "api", "src", "lib", "engine.ts"),
+      "import { log } from '@repo/logger';\nexport function run() { log('hello'); }\n"
+    );
+    // Route file that has "zabbix" in path — should NOT be matched by @repo/zabbix
+    writeFileSync(join(pkgRoot, "apps", "web", "app", "api", "zabbix", "ping", "route.ts"),
+      "export function GET() { return Response.json({ ok: true }); }\n"
+    );
+    // Actual logger package
+    writeFileSync(join(pkgRoot, "packages", "logger", "src", "index.ts"),
+      "export function log(msg) { console.log(msg); }\n"
+    );
+  });
+
+  after(() => {
+    if (pkgRoot && existsSync(pkgRoot)) rmSync(pkgRoot, { recursive: true, force: true });
+  });
+
+  it("@repo/ imports only match files in packages/, not routes with same name", () => {
+    const scan = scanProject(pkgRoot);
+    scan._rootDir = pkgRoot;
+    const arch = mapArchitecture(scan);
+
+    // Check that no edge goes from logic-core to ingress
+    const logicToIngress = arch.dependencyGraph.filter(e =>
+      e.from_layer === "logic-core" && e.to_layer === "ingress");
+    assert.equal(logicToIngress.length, 0,
+      "logic-core should NOT have edges to ingress — @repo/ must only match packages/");
+  });
+});
