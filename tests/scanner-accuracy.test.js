@@ -1262,3 +1262,53 @@ describe("dependency graph: @repo/ matches packages/ without leading slash", () 
     assert.ok(md.includes("State Store"), "MD should show State Store in graph");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round 12 fix — dynamic import() support in delegation checker and dependency graph
+// ---------------------------------------------------------------------------
+
+describe("delegation checker: dynamic import() support", () => {
+  let dynImportRoot;
+
+  before(() => {
+    dynImportRoot = mkdtempSync(join(tmpdir(), "zero-error-dynimport-"));
+    mkdirSync(join(dynImportRoot, "apps/api/src/routes"), { recursive: true });
+    mkdirSync(join(dynImportRoot, "apps/api/src/lib"), { recursive: true });
+
+    writeFileSync(join(dynImportRoot, "package.json"), JSON.stringify({
+      name: "test", workspaces: ["apps/*"],
+    }));
+
+    // Route uses dynamic import() — common pattern for lazy loading
+    writeFileSync(join(dynImportRoot, "apps/api/src/routes/correlation.ts"),
+      "const { correlate } = await import('../lib/correlation-engine');\nexport async function GET() { return correlate(); }\n"
+    );
+    writeFileSync(join(dynImportRoot, "apps/api/src/lib/correlation-engine.ts"),
+      "export function correlate() { return []; }\n"
+    );
+  });
+
+  after(() => {
+    if (dynImportRoot && existsSync(dynImportRoot)) rmSync(dynImportRoot, { recursive: true, force: true });
+  });
+
+  it("recognizes dynamic import() as delegation to Logic Core", () => {
+    const scan = scanProject(dynImportRoot);
+    scan._rootDir = dynImportRoot;
+    const arch = mapArchitecture(scan);
+    const delegBoundary = arch.boundaries.find(b => b.rule.includes("delegate to Logic Core"));
+    assert.ok(delegBoundary);
+    const violationFiles = delegBoundary.violations.map(v => v.file).filter(Boolean);
+    assert.ok(!violationFiles.some(f => f.includes("correlation.ts")),
+      "correlation.ts uses dynamic import() — should NOT be flagged as missing delegation");
+  });
+
+  it("dynamic import() creates edge in dependency graph", () => {
+    const scan = scanProject(dynImportRoot);
+    scan._rootDir = dynImportRoot;
+    const arch = mapArchitecture(scan);
+    const corrEdge = arch.dependencyGraph.find(e =>
+      e.from.includes("correlation.ts") && e.to.includes("correlation-engine"));
+    assert.ok(corrEdge, "dynamic import() should create an edge in the dependency graph");
+  });
+});
