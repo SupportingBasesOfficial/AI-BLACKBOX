@@ -506,10 +506,18 @@ describe("classification: barrel files (index.ts) not classified as routes", () 
     assert.notEqual(r.subtype, "route");
   });
 
-  it("does NOT classify apps/api/src/index.ts as route even with route type", () => {
+  it("DOES classify apps/api/src/index.ts as route when scanner detected route content (real API entry point)", () => {
+    // This is the main API entry point — it creates the Hono/Express app
+    // and mounts routes. It should be classified as ingress/route.
     const r = classifyPath("apps/api/src/index.ts", "route");
+    assert.equal(r.layer, "ingress");
+    assert.equal(r.subtype, "route");
+  });
+
+  it("does NOT classify apps/api/src/index.ts as route when scanner type is source (barrel file)", () => {
+    // Without route content, it's a barrel file, not a route handler
+    const r = classifyPath("apps/api/src/index.ts", "source");
     assert.notEqual(r.layer, "ingress");
-    assert.notEqual(r.subtype, "route");
   });
 });
 
@@ -587,5 +595,44 @@ describe("classification: runtime env vars expanded (round 3)", () => {
 
   it("detects BUILD_STANDALONE as runtime env var", () => {
     assert.ok(isRuntimeEnvVar("BUILD_STANDALONE"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round 4 fixes — based on ~92% accuracy validation feedback.
+// ---------------------------------------------------------------------------
+
+describe("classification: React hooks excluded from logic-core", () => {
+  it("does NOT classify lib/use-push-notifications.ts as logic-core", () => {
+    const r = classifyPath("lib/use-push-notifications.ts", "source");
+    assert.notEqual(r.layer, "logic-core");
+  });
+
+  it("does NOT classify lib/use-auth.ts as logic-core", () => {
+    const r = classifyPath("lib/use-auth.ts", "source");
+    assert.notEqual(r.layer, "logic-core");
+  });
+
+  it("DOES classify lib/web-push.ts as logic-core (not a hook)", () => {
+    const r = classifyPath("lib/web-push.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+});
+
+describe("classification: app entry point vs barrel file", () => {
+  it("classifies apps/api/src/index.ts with route type as ingress/route", () => {
+    const r = classifyPath("apps/api/src/index.ts", "route");
+    assert.equal(r.layer, "ingress");
+    assert.equal(r.subtype, "route");
+  });
+
+  it("does NOT classify packages/api/src/index.ts with route type as ingress (barrel)", () => {
+    const r = classifyPath("packages/api/src/index.ts", "route");
+    assert.notEqual(r.layer, "ingress");
+  });
+
+  it("does NOT classify packages/db/src/index.ts with route type as ingress (barrel)", () => {
+    const r = classifyPath("packages/db/src/index.ts", "route");
+    assert.notEqual(r.layer, "ingress");
   });
 });
