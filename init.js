@@ -596,7 +596,8 @@ function generateSourceOfTruth(scanResult, techDebtResult) {
     project_integrity: {
       monorepo: scanResult.monorepo,
       monorepo_packages: scanResult.monorepoPackages.map(p => p.name),
-      entry_points: detectEntryPoints(scanResult),
+      entry_points: detectEntryPoints(scanResult).all,
+      entry_points_detailed: detectEntryPoints(scanResult),
       reserved_keywords: [],
       critical_paths: scanResult.criticalPaths.map(cp => cp.path),
       critical_path_test_required: true,
@@ -619,52 +620,61 @@ function generateSourceOfTruth(scanResult, techDebtResult) {
 }
 
 function detectEntryPoints(scanResult) {
-  const entries = [];
+  // Split entry points into categories for better usability.
+  // Returns { package_entry_points, app_entry_points, route_entry_points, all }
+  const packageEntries = [];
+  const appEntries = [];
+  const routeEntries = [];
 
-  // 1. Real entry points first: index.ts/js at package roots and app roots
+  // 1. Package entry points: index.ts/js in packages/*/src/
   const indexFiles = (scanResult.allScannedFiles || []).filter(f => {
     const name = f.split("/").pop().toLowerCase();
     return (name === "index.ts" || name === "index.js" || name === "index.tsx" || name === "index.jsx")
       && !isTestFile(f);
   });
 
-  // Sort index files: root index first, then by depth (shallower = more likely entry)
-  indexFiles.sort((a, b) => a.split("/").length - b.split("/").length);
   for (const f of indexFiles) {
-    if (!entries.includes(f)) entries.push(f);
+    if (/(?:^|\/)packages\//i.test(f)) {
+      if (!packageEntries.includes(f)) packageEntries.push(f);
+    } else {
+      if (!appEntries.includes(f)) appEntries.push(f);
+    }
   }
+
+  // Sort app entries by depth (shallower = more likely main entry)
+  appEntries.sort((a, b) => a.split("/").length - b.split("/").length);
 
   // 2. Routes classified as ingress/route (not middleware, not components)
   for (const route of scanResult.routes) {
-    if (entries.includes(route.file)) continue;
     if (isTestFile(route.file)) continue;
+    if (packageEntries.includes(route.file) || appEntries.includes(route.file) || routeEntries.includes(route.file)) continue;
     const classification = classifyPath(route.file, "route");
     if (classification.layer === "ingress" && classification.subtype === "route") {
-      entries.push(route.file);
+      routeEntries.push(route.file);
     }
   }
 
-  // 3. Other ingress files (middleware, components) are NOT entry points
-  // 4. Config files (env.ts, layout.tsx) that are real entry points
+  // 3. Config entry points (env.ts, layout.tsx, main.ts, server.ts)
   const configEntryPatterns = [
-    /(?:^|\/)env\.ts$/i,
-    /(?:^|\/)env\.js$/i,
-    /(?:^|\/)types\.ts$/i,
-    /(?:^|\/)app\/layout\.tsx$/i,
-    /(?:^|\/)app\/page\.tsx$/i,
-    /(?:^|\/)main\.ts$/i,
-    /(?:^|\/)main\.tsx$/i,
-    /(?:^|\/)server\.ts$/i,
-    /(?:^|\/)server\.js$/i,
+    /(?:^|\/)env\.ts$/i, /(?:^|\/)env\.js$/i, /(?:^|\/)types\.ts$/i,
+    /(?:^|\/)app\/layout\.tsx$/i, /(?:^|\/)app\/page\.tsx$/i,
+    /(?:^|\/)main\.ts$/i, /(?:^|\/)main\.tsx$/i,
+    /(?:^|\/)server\.ts$/i, /(?:^|\/)server\.js$/i,
   ];
   for (const f of scanResult.allScannedFiles || []) {
-    if (entries.includes(f)) continue;
+    if (packageEntries.includes(f) || appEntries.includes(f) || routeEntries.includes(f)) continue;
     if (configEntryPatterns.some(p => p.test(f))) {
-      entries.push(f);
+      appEntries.push(f);
     }
   }
 
-  return entries.slice(0, 20);
+  // Return structured object — no truncation, all entry points included
+  return {
+    package_entry_points: packageEntries,
+    app_entry_points: appEntries,
+    route_entry_points: routeEntries,
+    all: [...appEntries, ...packageEntries, ...routeEntries],
+  };
 }
 
 function generateCodeStandards(languages, scanResult) {

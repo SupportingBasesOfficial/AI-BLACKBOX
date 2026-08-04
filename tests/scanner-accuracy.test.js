@@ -673,22 +673,22 @@ describe("classification: infrastructure packages in state-store", () => {
 // ---------------------------------------------------------------------------
 
 describe("classification: connector token is directory-aware", () => {
-  it("classifies lib/itsm-connector.ts as logic-core/business (integration logic)", () => {
+  it("classifies lib/itsm-connector.ts as logic-core/integration (external system integration)", () => {
     const r = classifyPath("lib/itsm-connector.ts", "source");
     assert.equal(r.layer, "logic-core");
-    assert.equal(r.subtype, "business");
+    assert.equal(r.subtype, "integration");
   });
 
-  it("classifies lib/external-connector.ts as logic-core/business", () => {
+  it("classifies lib/external-connector.ts as logic-core/integration", () => {
     const r = classifyPath("lib/external-connector.ts", "source");
     assert.equal(r.layer, "logic-core");
-    assert.equal(r.subtype, "business");
+    assert.equal(r.subtype, "integration");
   });
 
-  it("classifies services/data-connector.ts as logic-core/business (in services/)", () => {
+  it("classifies services/data-connector.ts as logic-core/integration (in services/)", () => {
     const r = classifyPath("services/data-connector.ts", "source");
     assert.equal(r.layer, "logic-core");
-    assert.equal(r.subtype, "business");
+    assert.equal(r.subtype, "integration");
   });
 
   it("classifies data/db-connector.ts as logic-core/data-access (in data/)", () => {
@@ -746,5 +746,41 @@ describe("architecture-mapper: delegation boundary analysis", () => {
       "bad-route.ts (no lib/ import) should be flagged as not delegating");
     assert.ok(!violationFiles.includes("routes/good-route.ts"),
       "good-route.ts (imports from lib/) should NOT be flagged");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round 7 fixes — middleware.ts, index.tsx barrel, test files in critical paths.
+// ---------------------------------------------------------------------------
+
+describe("classification: Next.js root middleware.ts", () => {
+  it("classifies middleware.ts as ingress/middleware even with route type", () => {
+    const r = classifyPath("middleware.ts", "route");
+    assert.equal(r.layer, "ingress");
+    assert.equal(r.subtype, "middleware");
+  });
+
+  it("classifies src/middleware.ts as ingress/middleware even with route type", () => {
+    const r = classifyPath("src/middleware.ts", "route");
+    assert.equal(r.layer, "ingress");
+    assert.equal(r.subtype, "middleware");
+  });
+
+  it("classifies apps/web/middleware.ts as ingress/middleware even with route type", () => {
+    const r = classifyPath("apps/web/middleware.ts", "route");
+    assert.equal(r.layer, "ingress");
+    assert.equal(r.subtype, "middleware");
+  });
+});
+
+describe("classification: package index.tsx not a component", () => {
+  it("does NOT classify packages/ui/src/index.tsx as component", () => {
+    const r = classifyPath("packages/ui/src/index.tsx", "component");
+    assert.notEqual(r.subtype, "component");
+  });
+
+  it("does NOT classify packages/ui/src/index.ts as component", () => {
+    const r = classifyPath("packages/ui/src/index.ts", "component");
+    assert.notEqual(r.subtype, "component");
   });
 });
