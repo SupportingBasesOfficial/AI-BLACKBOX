@@ -62,10 +62,20 @@ async function main() {
   scanResult._rootDir = cwd;
   console.log(`         ${scanResult.totalFiles} ficheiros, ${scanResult.schemas.length} schemas, ${scanResult.routes.length} rotas, ${scanResult.models.length} models`);
 
-  // Step 3.5: Tech debt scan
-  console.log(`  [3.5/21] Escaneando débito técnico...`);
+  // Step 3.5: Detect feature flags (needed by tech-debt report and architecture map)
+  const { detectFeatureFlags, generateFeatureFlagsSection } = await import("./lib/feature-flag-detector.js");
+  const flagResult = detectFeatureFlags(cwd);
+  scanResult.featureFlags = flagResult.flags;
+  scanResult.featureFlagProviders = flagResult.providers;
+  console.log(`         ${flagResult.totalFlags} feature flags detectadas`);
+
+  // Step 3.6: Tech debt scan
+  console.log(`  [3.6/21] Escaneando débito técnico...`);
   const { scanTechDebt, generateTechDebtReport } = await import("./lib/tech-debt-scanner.js");
   const techDebtResult = scanTechDebt(cwd, scanResult);
+  // Attach feature flags to techDebtResult for the report generator
+  techDebtResult.featureFlags = flagResult.flags;
+  techDebtResult.featureFlagProviders = flagResult.providers;
   writeFileSync(join(__dirname, "tech-debt-report.json"), JSON.stringify(techDebtResult, null, 2));
   const techDebtMd = generateTechDebtReport(techDebtResult);
   writeFileSync(join(__dirname, "tech-debt-report.md"), techDebtMd);
@@ -98,6 +108,7 @@ async function main() {
 
   // Step 7: Generate architecture-map.md
   console.log(`  [7/21] Gerando architecture-map.md...`);
+  // Feature flags already detected in step 3.5 — scanResult has them
   const archMapContent = generateArchitectureMap(archMap, scanResult);
   writeFileSync(join(__dirname, "architecture-map.md"), archMapContent);
 
@@ -108,8 +119,7 @@ async function main() {
 
   // Step 9: Generate shadow-context.md
   console.log(`  [9/21] Gerando shadow-context.md...`);
-  const { detectFeatureFlags, generateFeatureFlagsSection } = await import("./lib/feature-flag-detector.js");
-  const flagResult = detectFeatureFlags(cwd);
+  // flagResult already detected in step 7 — reuse it
   const shadowContext = generateShadowContext(scanResult, flagResult, generateFeatureFlagsSection);
   writeFileSync(join(__dirname, "shadow-context.md"), shadowContext);
   console.log(`         ${flagResult.totalFlags} feature flags, ${scanResult.envVars.length} env vars`);

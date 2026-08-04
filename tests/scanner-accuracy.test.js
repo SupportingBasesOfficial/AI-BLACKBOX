@@ -10,7 +10,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { scanProject } from "../lib/context-scanner.js";
 import { mapArchitecture, generateArchitectureMap } from "../lib/architecture-mapper.js";
-import { scanTechDebt } from "../lib/tech-debt-scanner.js";
+import { scanTechDebt, analyzeFileComplexity } from "../lib/tech-debt-scanner.js";
 import { classifyPath, isTestFile, isRuntimeEnvVar, tokenizePath } from "../lib/classification.js";
 
 let root;
@@ -782,5 +782,154 @@ describe("classification: package index.tsx not a component", () => {
   it("does NOT classify packages/ui/src/index.ts as component", () => {
     const r = classifyPath("packages/ui/src/index.ts", "component");
     assert.notEqual(r.subtype, "component");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round 8 features — circular deps, complexity, dependency graph, feature flags.
+// ---------------------------------------------------------------------------
+
+describe("feature 8: circular dependency detection", () => {
+  let cycleRoot;
+
+  before(() => {
+    cycleRoot = mkdtempSync(join(tmpdir(), "zero-error-cycle-"));
+    mkdirSync(join(cycleRoot, "lib"), { recursive: true });
+
+    // A → B → C → A (circular)
+    writeFileSync(join(cycleRoot, "lib", "a.ts"),
+      "import { b } from './b';\nexport function a() { return b(); }\n");
+    writeFileSync(join(cycleRoot, "lib", "b.ts"),
+      "import { c } from './c';\nexport function b() { return c(); }\n");
+    writeFileSync(join(cycleRoot, "lib", "c.ts"),
+      "import { a } from './a';\nexport function c() { return a(); }\n");
+
+    // D → E (no cycle, control)
+    writeFileSync(join(cycleRoot, "lib", "d.ts"),
+      "import { e } from './e';\nexport function d() { return e(); }\n");
+    writeFileSync(join(cycleRoot, "lib", "e.ts"),
+      "export function e() { return 42; }\n");
+  });
+
+  after(() => {
+    if (cycleRoot && existsSync(cycleRoot)) rmSync(cycleRoot, { recursive: true, force: true });
+  });
+
+  it("detects circular dependency A → B → C → A", () => {
+    const result = scanTechDebt(cycleRoot, { _rootDir: cycleRoot, allScannedFiles: [], monorepo: false, envVars: [] });
+    const circularFindings = result.findings.filter(f => f.type === "circular_dependency");
+    assert.ok(circularFindings.length > 0, "should detect at least one circular dependency");
+    const cycleMsg = circularFindings.map(f => f.message).join(" ");
+    assert.ok(cycleMsg.includes("a") && cycleMsg.includes("b") && cycleMsg.includes("c"),
+      "cycle should involve a, b, and c");
+  });
+});
+
+describe("feature 9: file complexity analysis", () => {
+  let complexityRoot;
+
+  before(() => {
+    complexityRoot = mkdtempSync(join(tmpdir(), "zero-error-complex-"));
+    mkdirSync(join(complexityRoot, "lib"), { recursive: true });
+
+    // Simple file (low complexity)
+    writeFileSync(join(complexityRoot, "lib", "simple.ts"),
+      "export function add(a, b) {\n  return a + b;\n}\n");
+
+    // Complex file (many branches)
+    writeFileSync(join(complexityRoot, "lib", "complex.ts"),
+      `export function process(data) {
+  if (data.type === 'a') {
+    for (const item of data.items) {
+      if (item.active) {
+        switch (item.status) {
+          case 'ok': break;
+          case 'err': try { handle(item); } catch (e) { log(e); } break;
+          default: if (item.retry) { while (item.count > 0) { item.count--; } }
+        }
+      }
+    }
+  } else if (data.type === 'b') {
+    return data.value || data.fallback;
+  }
+  return true;
+}
+`);
+  });
+
+  after(() => {
+    if (complexityRoot && existsSync(complexityRoot)) rmSync(complexityRoot, { recursive: true, force: true });
+  });
+
+  it("analyzes simple file with low complexity", () => {
+    const result = analyzeFileComplexity(join(complexityRoot, "lib", "simple.ts"));
+    assert.ok(result);
+    assert.ok(result.loc > 0);
+    assert.equal(result.complexity_label, "low");
+    assert.ok(result.cyclomatic_complexity <= 5);
+  });
+
+  it("analyzes complex file with high complexity", () => {
+    const result = analyzeFileComplexity(join(complexityRoot, "lib", "complex.ts"));
+    assert.ok(result);
+    assert.ok(result.cyclomatic_complexity > 5, `complexity should be > 5, got ${result.cyclomatic_complexity}`);
+    assert.ok(result.complexity_label === "medium" || result.complexity_label === "high" || result.complexity_label === "very-high");
+  });
+
+  it("returns null for non-existent file", () => {
+    const result = analyzeFileComplexity(join(complexityRoot, "nonexistent.ts"));
+    assert.equal(result, null);
+  });
+});
+
+describe("feature 11: dependency graph between layers", () => {
+  let graphRoot;
+
+  before(() => {
+    graphRoot = mkdtempSync(join(tmpdir(), "zero-error-graph-"));
+    mkdirSync(join(graphRoot, "routes"), { recursive: true });
+    mkdirSync(join(graphRoot, "lib"), { recursive: true });
+    mkdirSync(join(graphRoot, "db"), { recursive: true });
+
+    // Route imports from lib (ingress → logic-core)
+    writeFileSync(join(graphRoot, "routes", "users.ts"),
+      "import { getUser } from '../lib/user-service';\nexport function GET() { return getUser(); }\n");
+    // Logic core imports from db (logic-core → state-store)
+    writeFileSync(join(graphRoot, "lib", "user-service.ts"),
+      "import { query } from '../db/client';\nexport function getUser() { return query('SELECT 1'); }\n");
+    writeFileSync(join(graphRoot, "db", "client.ts"),
+      "export function query(sql) { return []; }\n");
+  });
+
+  after(() => {
+    if (graphRoot && existsSync(graphRoot)) rmSync(graphRoot, { recursive: true, force: true });
+  });
+
+  it("builds real dependency graph with cross-layer edges", () => {
+    const scan = scanProject(graphRoot);
+    scan._rootDir = graphRoot;
+    const arch = mapArchitecture(scan);
+    assert.ok(arch.dependencyGraph, "dependency graph should exist");
+    assert.ok(arch.dependencyGraph.length > 0, "should have at least one edge");
+
+    // Should have ingress → logic-core edge
+    const ingressToLogic = arch.dependencyGraph.filter(e =>
+      e.from_layer === "ingress" && e.to_layer === "logic-core");
+    assert.ok(ingressToLogic.length > 0, "should have ingress → logic-core edge");
+
+    // Should have logic-core → state-store edge
+    const logicToState = arch.dependencyGraph.filter(e =>
+      e.from_layer === "logic-core" && e.to_layer === "state-store");
+    assert.ok(logicToState.length > 0, "should have logic-core → state-store edge");
+  });
+
+  it("renders dependency graph section in architecture map", () => {
+    const scan = scanProject(graphRoot);
+    scan._rootDir = graphRoot;
+    const arch = mapArchitecture(scan);
+    const md = generateArchitectureMap(arch, scan);
+    assert.ok(md.includes("## Dependency Graph"), "map should have Dependency Graph section");
+    assert.ok(md.includes("Ingress") && md.includes("Logic Core"),
+      "map should show layer names in graph");
   });
 });
