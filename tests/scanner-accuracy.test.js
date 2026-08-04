@@ -1645,3 +1645,160 @@ describe("unused exports: filters config files", () => {
       "Config files should NOT be flagged as unused exports");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round 15 fixes — dynamic import, re-exports, instrumentation.ts, CLI scripts, eslint config
+// ---------------------------------------------------------------------------
+
+describe("unused exports: dynamic import() in tech-debt scanner", () => {
+  let dynImportExportRoot;
+
+  before(() => {
+    dynImportExportRoot = mkdtempSync(join(tmpdir(), "zero-error-dyn-export-"));
+    mkdirSync(join(dynImportExportRoot, "apps/web/components"), { recursive: true });
+    mkdirSync(join(dynImportExportRoot, "apps/web/app/dashboard"), { recursive: true });
+
+    writeFileSync(join(dynImportExportRoot, "tsconfig.json"), JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "@/*": ["apps/web/*"] } },
+    }));
+
+    // Component imported via Next.js dynamic() + import()
+    writeFileSync(join(dynImportExportRoot, "apps/web/components/chart.tsx"),
+      "export function Chart() { return null; }\n");
+    writeFileSync(join(dynImportExportRoot, "apps/web/app/dashboard/page.tsx"),
+      "import dynamic from 'next/dynamic';\nconst Chart = dynamic(() => import('@/components/chart'));\nexport default function Page() { return <Chart/>; }\n");
+  });
+
+  after(() => {
+    if (dynImportExportRoot && existsSync(dynImportExportRoot)) rmSync(dynImportExportRoot, { recursive: true, force: true });
+  });
+
+  it("resolves dynamic(() => import('@/...')) and does NOT flag as unused", () => {
+    const scan = { _rootDir: dynImportExportRoot, allScannedFiles: [], monorepo: false, envVars: [] };
+    const result = scanTechDebt(dynImportExportRoot, scan);
+    const unusedFindings = result.findings.filter(f => f.type === "unused_export");
+    const chartFinding = unusedFindings.find(f => f.file === "apps/web/components/chart.tsx");
+    assert.ok(!chartFinding,
+      "chart.tsx is imported via dynamic(() => import('@/components/chart')) — should NOT be flagged");
+  });
+});
+
+describe("unused exports: re-export tracking via index.ts", () => {
+  let reExportRoot;
+
+  before(() => {
+    reExportRoot = mkdtempSync(join(tmpdir(), "zero-error-reexport-"));
+    mkdirSync(join(reExportRoot, "packages/cache/src"), { recursive: true });
+
+    writeFileSync(join(reExportRoot, "package.json"), JSON.stringify({
+      name: "test", workspaces: ["packages/*"],
+    }));
+
+    // circuit-breaker.ts is exported but only imported by index.ts (re-export)
+    writeFileSync(join(reExportRoot, "packages/cache/src/circuit-breaker.ts"),
+      "export class CircuitBreaker { constructor() {} }\n");
+    // index.ts re-exports circuit-breaker
+    writeFileSync(join(reExportRoot, "packages/cache/src/index.ts"),
+      "export { CircuitBreaker } from './circuit-breaker';\nexport function get(key) { return null; }\n");
+    // Consumer imports from @repo/cache (the package), not directly from circuit-breaker
+    mkdirSync(join(reExportRoot, "apps/api/src/routes"), { recursive: true });
+    writeFileSync(join(reExportRoot, "apps/api/src/routes/health.ts"),
+      "import { get } from '@repo/cache';\nexport function GET() { return get('key'); }\n");
+  });
+
+  after(() => {
+    if (reExportRoot && existsSync(reExportRoot)) rmSync(reExportRoot, { recursive: true, force: true });
+  });
+
+  it("does NOT flag files re-exported by index.ts", () => {
+    const scan = { _rootDir: reExportRoot, allScannedFiles: [], monorepo: false, envVars: [] };
+    const result = scanTechDebt(reExportRoot, scan);
+    const unusedFindings = result.findings.filter(f => f.type === "unused_export");
+    const cbFinding = unusedFindings.find(f => f.file.includes("circuit-breaker"));
+    assert.ok(!cbFinding,
+      "circuit-breaker.ts is re-exported by index.ts — should NOT be flagged as unused");
+  });
+});
+
+describe("unused exports: filters instrumentation.ts (Next.js convention)", () => {
+  let instrumentationRoot;
+
+  before(() => {
+    instrumentationRoot = mkdtempSync(join(tmpdir(), "zero-error-instr-"));
+    mkdirSync(join(instrumentationRoot, "app"), { recursive: true });
+
+    writeFileSync(join(instrumentationRoot, "app/instrumentation.ts"),
+      "export async function register() { /* OpenTelemetry setup */ }\n");
+  });
+
+  after(() => {
+    if (instrumentationRoot && existsSync(instrumentationRoot)) rmSync(instrumentationRoot, { recursive: true, force: true });
+  });
+
+  it("does NOT flag instrumentation.ts as unused export", () => {
+    const scan = { _rootDir: instrumentationRoot, allScannedFiles: [], monorepo: false, envVars: [] };
+    const result = scanTechDebt(instrumentationRoot, scan);
+    const unusedFindings = result.findings.filter(f => f.type === "unused_export");
+    const instrFinding = unusedFindings.find(f => f.file.includes("instrumentation"));
+    assert.ok(!instrFinding,
+      "instrumentation.ts is a Next.js convention file — should NOT be flagged");
+  });
+});
+
+describe("unused exports: filters CLI scripts", () => {
+  let cliRoot;
+
+  before(() => {
+    cliRoot = mkdtempSync(join(tmpdir(), "zero-error-cli-"));
+    mkdirSync(join(cliRoot, "scripts"), { recursive: true });
+
+    // Script with shebang
+    writeFileSync(join(cliRoot, "scripts/migrate.ts"),
+      "#!/usr/bin/env node\nimport { db } from './db';\nexport async function migrate() { await db(); }\nmigrate();\n");
+    // gen-*.mjs scaffold generator
+    writeFileSync(join(cliRoot, "scripts/gen-api.mjs"),
+      "#!/usr/bin/env node\nexport function genApi() { console.log('gen'); }\ngenApi();\n");
+    // stress-test in root
+    writeFileSync(join(cliRoot, "stress-test.ts"),
+      "export function runStressTest() { /* k6 */ }\nrunStressTest();\n");
+  });
+
+  after(() => {
+    if (cliRoot && existsSync(cliRoot)) rmSync(cliRoot, { recursive: true, force: true });
+  });
+
+  it("does NOT flag CLI scripts (shebang, scripts/ dir, gen-* pattern)", () => {
+    const scan = { _rootDir: cliRoot, allScannedFiles: [], monorepo: false, envVars: [] };
+    const result = scanTechDebt(cliRoot, scan);
+    const unusedFindings = result.findings.filter(f => f.type === "unused_export");
+    const cliFindings = unusedFindings.filter(f =>
+      f.file.includes("migrate") || f.file.includes("gen-api") || f.file.includes("stress-test"));
+    assert.equal(cliFindings.length, 0,
+      "CLI scripts should NOT be flagged as unused exports");
+  });
+});
+
+describe("unused exports: filters ESLint config helper files", () => {
+  let eslintRoot;
+
+  before(() => {
+    eslintRoot = mkdtempSync(join(tmpdir(), "zero-error-eslint-"));
+
+    // ESLint flat config helper file (not a .config.js file, but loaded by ESLint)
+    writeFileSync(join(eslintRoot, "eslint-node.js"),
+      "export const nodeRules = { 'no-process-exit': 'off' };\n");
+  });
+
+  after(() => {
+    if (eslintRoot && existsSync(eslintRoot)) rmSync(eslintRoot, { recursive: true, force: true });
+  });
+
+  it("does NOT flag ESLint config helper files", () => {
+    const scan = { _rootDir: eslintRoot, allScannedFiles: [], monorepo: false, envVars: [] };
+    const result = scanTechDebt(eslintRoot, scan);
+    const unusedFindings = result.findings.filter(f => f.type === "unused_export");
+    const eslintFinding = unusedFindings.find(f => f.file.includes("eslint-node"));
+    assert.ok(!eslintFinding,
+      "eslint-node.js is an ESLint config helper — should NOT be flagged");
+  });
+});
