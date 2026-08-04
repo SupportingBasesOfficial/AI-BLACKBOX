@@ -1193,3 +1193,72 @@ export type FlagConfig = {
     assert.equal(result.totalFlags, 0, "type-only file should produce zero flags");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round 11 fix — @repo/ matching with paths that don't have leading /
+// ---------------------------------------------------------------------------
+
+describe("dependency graph: @repo/ matches packages/ without leading slash", () => {
+  let repoMatchRoot;
+
+  before(() => {
+    repoMatchRoot = mkdtempSync(join(tmpdir(), "zero-error-repomatch-"));
+    mkdirSync(join(repoMatchRoot, "apps/api/src/routes"), { recursive: true });
+    mkdirSync(join(repoMatchRoot, "apps/api/src/lib"), { recursive: true });
+    mkdirSync(join(repoMatchRoot, "packages/db/src"), { recursive: true });
+    mkdirSync(join(repoMatchRoot, "packages/logger/src"), { recursive: true });
+
+    writeFileSync(join(repoMatchRoot, "package.json"), JSON.stringify({
+      name: "test-monorepo",
+      workspaces: ["apps/*", "packages/*"],
+    }));
+
+    // Route imports @repo/db — should create ingress -> state-store edge
+    writeFileSync(join(repoMatchRoot, "apps/api/src/routes/users.ts"),
+      "import { query } from '@repo/db';\nexport function GET() { return query('SELECT 1'); }\n"
+    );
+    // Logic-core imports @repo/logger — should create logic-core -> state-store edge
+    writeFileSync(join(repoMatchRoot, "apps/api/src/lib/user-service.ts"),
+      "import { log } from '@repo/logger';\nexport function getUser() { log('getUser'); return []; }\n"
+    );
+    writeFileSync(join(repoMatchRoot, "packages/db/src/index.ts"),
+      "export function query(sql) { return []; }\n"
+    );
+    writeFileSync(join(repoMatchRoot, "packages/logger/src/index.ts"),
+      "export function log(msg) { console.log(msg); }\n"
+    );
+  });
+
+  after(() => {
+    if (repoMatchRoot && existsSync(repoMatchRoot)) rmSync(repoMatchRoot, { recursive: true, force: true });
+  });
+
+  it("@repo/db creates ingress -> state-store edge", () => {
+    const scan = scanProject(repoMatchRoot);
+    scan._rootDir = repoMatchRoot;
+    const arch = mapArchitecture(scan);
+    const ingressToState = arch.dependencyGraph.filter(e =>
+      e.from_layer === "ingress" && e.to_layer === "state-store");
+    assert.ok(ingressToState.length > 0,
+      "@repo/db should create ingress -> state-store edge");
+  });
+
+  it("@repo/logger creates logic-core -> state-store edge", () => {
+    const scan = scanProject(repoMatchRoot);
+    scan._rootDir = repoMatchRoot;
+    const arch = mapArchitecture(scan);
+    const logicToState = arch.dependencyGraph.filter(e =>
+      e.from_layer === "logic-core" && e.to_layer === "state-store");
+    assert.ok(logicToState.length > 0,
+      "@repo/logger should create logic-core -> state-store edge");
+  });
+
+  it("MD includes Dependency Graph section with cross-layer edges", () => {
+    const scan = scanProject(repoMatchRoot);
+    scan._rootDir = repoMatchRoot;
+    const arch = mapArchitecture(scan);
+    const md = generateArchitectureMap(arch, scan);
+    assert.ok(md.includes("## Dependency Graph"), "MD should have Dependency Graph section");
+    assert.ok(md.includes("State Store"), "MD should show State Store in graph");
+  });
+});
