@@ -488,3 +488,104 @@ describe("classification: runtime env vars expanded", () => {
     assert.ok(!isRuntimeEnvVar("JWT_PRIVATE_KEY"));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round 3 fixes — based on ~85% accuracy validation feedback.
+// ---------------------------------------------------------------------------
+
+describe("classification: barrel files (index.ts) not classified as routes", () => {
+  it("does NOT classify packages/api/src/index.ts as route even with route type", () => {
+    const r = classifyPath("packages/api/src/index.ts", "route");
+    assert.notEqual(r.layer, "ingress");
+    assert.notEqual(r.subtype, "route");
+  });
+
+  it("does NOT classify packages/db/src/index.ts as route even with route type", () => {
+    const r = classifyPath("packages/db/src/index.ts", "route");
+    assert.notEqual(r.layer, "ingress");
+    assert.notEqual(r.subtype, "route");
+  });
+
+  it("does NOT classify apps/api/src/index.ts as route even with route type", () => {
+    const r = classifyPath("apps/api/src/index.ts", "route");
+    assert.notEqual(r.layer, "ingress");
+    assert.notEqual(r.subtype, "route");
+  });
+});
+
+describe("classification: components in components/ dir not overridden by route type", () => {
+  it("classifies components/logout-button.tsx as component even with false route type", () => {
+    const r = classifyPath("components/logout-button.tsx", "route");
+    assert.equal(r.layer, "ingress");
+    assert.equal(r.subtype, "component");
+  });
+
+  it("classifies components/device-detail-client.tsx as component even with false route type", () => {
+    const r = classifyPath("components/device-detail-client.tsx", "route");
+    assert.equal(r.layer, "ingress");
+    assert.equal(r.subtype, "component");
+  });
+});
+
+describe("classification: check-* scripts excluded", () => {
+  it("excludes check-zabbix-config.js", () => {
+    assert.equal(classifyPath("check-zabbix-config.js", "source").layer, "unclassified");
+    assert.equal(classifyPath("check-zabbix-config.js", "route").layer, "unclassified");
+  });
+});
+
+describe("classification: apply/register scripts excluded", () => {
+  it("excludes apply-migrations.mjs", () => {
+    assert.equal(classifyPath("apply-migrations.mjs", "source").layer, "unclassified");
+  });
+
+  it("excludes register-migration.mjs", () => {
+    assert.equal(classifyPath("register-migration.mjs", "source").layer, "unclassified");
+  });
+});
+
+describe("classification: sentry config not logic-core", () => {
+  it("does NOT classify sentry.client.config.ts as logic-core", () => {
+    const r = classifyPath("sentry.client.config.ts", "source");
+    assert.notEqual(r.layer, "logic-core");
+  });
+
+  it("does NOT classify next.config.ts as logic-core", () => {
+    const r = classifyPath("next.config.ts", "source");
+    assert.notEqual(r.layer, "logic-core");
+  });
+});
+
+describe("classification: web-push.ts as logic-core", () => {
+  it("classifies lib/web-push.ts as logic-core", () => {
+    const r = classifyPath("lib/web-push.ts", "source");
+    assert.equal(r.layer, "logic-core");
+  });
+});
+
+describe("classification: SQL migration timestamp files", () => {
+  it("classifies 20260725190000_firewall_rules.sql as state-store", () => {
+    const r = classifyPath("migrations/20260725190000_firewall_rules.sql", "source");
+    assert.equal(r.layer, "state-store");
+  });
+
+  it("classifies 20260725310000_webhook_management.sql as state-store", () => {
+    const r = classifyPath("migrations/20260725310000_webhook_management.sql", "source");
+    assert.equal(r.layer, "state-store");
+  });
+
+  it("classifies timestamp SQL in drizzle/ as state-store", () => {
+    const r = classifyPath("drizzle/20260725190000_firewall_rules.sql", "source");
+    assert.equal(r.layer, "state-store");
+  });
+});
+
+describe("classification: runtime env vars expanded (round 3)", () => {
+  it("detects ANALYZE as runtime env var", () => {
+    assert.ok(isRuntimeEnvVar("ANALYZE"));
+  });
+
+  it("detects BUILD_STANDALONE as runtime env var", () => {
+    assert.ok(isRuntimeEnvVar("BUILD_STANDALONE"));
+  });
+});

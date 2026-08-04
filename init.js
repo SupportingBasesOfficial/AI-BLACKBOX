@@ -8,6 +8,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
 import { buildLexicalGlossary, generateGlossaryJson } from "./lib/lexical-glossary-builder.js";
+import { classifyPath, isTestFile } from "./lib/classification.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const cwd = process.cwd();
@@ -619,9 +620,50 @@ function generateSourceOfTruth(scanResult, techDebtResult) {
 
 function detectEntryPoints(scanResult) {
   const entries = [];
-  for (const route of scanResult.routes) {
-    entries.push(route.file);
+
+  // 1. Real entry points first: index.ts/js at package roots and app roots
+  const indexFiles = (scanResult.allScannedFiles || []).filter(f => {
+    const name = f.split("/").pop().toLowerCase();
+    return (name === "index.ts" || name === "index.js" || name === "index.tsx" || name === "index.jsx")
+      && !isTestFile(f);
+  });
+
+  // Sort index files: root index first, then by depth (shallower = more likely entry)
+  indexFiles.sort((a, b) => a.split("/").length - b.split("/").length);
+  for (const f of indexFiles) {
+    if (!entries.includes(f)) entries.push(f);
   }
+
+  // 2. Routes classified as ingress/route (not middleware, not components)
+  for (const route of scanResult.routes) {
+    if (entries.includes(route.file)) continue;
+    if (isTestFile(route.file)) continue;
+    const classification = classifyPath(route.file, "route");
+    if (classification.layer === "ingress" && classification.subtype === "route") {
+      entries.push(route.file);
+    }
+  }
+
+  // 3. Other ingress files (middleware, components) are NOT entry points
+  // 4. Config files (env.ts, layout.tsx) that are real entry points
+  const configEntryPatterns = [
+    /(?:^|\/)env\.ts$/i,
+    /(?:^|\/)env\.js$/i,
+    /(?:^|\/)types\.ts$/i,
+    /(?:^|\/)app\/layout\.tsx$/i,
+    /(?:^|\/)app\/page\.tsx$/i,
+    /(?:^|\/)main\.ts$/i,
+    /(?:^|\/)main\.tsx$/i,
+    /(?:^|\/)server\.ts$/i,
+    /(?:^|\/)server\.js$/i,
+  ];
+  for (const f of scanResult.allScannedFiles || []) {
+    if (entries.includes(f)) continue;
+    if (configEntryPatterns.some(p => p.test(f))) {
+      entries.push(f);
+    }
+  }
+
   return entries.slice(0, 20);
 }
 
