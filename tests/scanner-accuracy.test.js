@@ -1312,3 +1312,212 @@ describe("delegation checker: dynamic import() support", () => {
     assert.ok(corrEdge, "dynamic import() should create an edge in the dependency graph");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round 13 features — coverage expansion: violation directions, business flows,
+// severity classification, type issues, unused exports.
+// ---------------------------------------------------------------------------
+
+describe("dependency graph: shows violation directions even when empty", () => {
+  let cleanRoot;
+
+  before(() => {
+    cleanRoot = mkdtempSync(join(tmpdir(), "zero-error-clean-"));
+    mkdirSync(join(cleanRoot, "apps/api/src/routes"), { recursive: true });
+    mkdirSync(join(cleanRoot, "apps/api/src/lib"), { recursive: true });
+    mkdirSync(join(cleanRoot, "packages/db/src"), { recursive: true });
+
+    writeFileSync(join(cleanRoot, "package.json"), JSON.stringify({
+      name: "test", workspaces: ["apps/*", "packages/*"],
+    }));
+    // Clean architecture: route → lib → db (no violations)
+    writeFileSync(join(cleanRoot, "apps/api/src/routes/users.ts"),
+      "import { getUsers } from '../lib/user-service';\nexport function GET() { return getUsers(); }\n");
+    writeFileSync(join(cleanRoot, "apps/api/src/lib/user-service.ts"),
+      "import { query } from '@repo/db';\nexport function getUsers() { return query('SELECT 1'); }\n");
+    writeFileSync(join(cleanRoot, "packages/db/src/index.ts"),
+      "export function query(sql) { return []; }\n");
+  });
+
+  after(() => {
+    if (cleanRoot && existsSync(cleanRoot)) rmSync(cleanRoot, { recursive: true, force: true });
+  });
+
+  it("MD shows 'OK: No architectural violations' for clean directions", () => {
+    const scan = scanProject(cleanRoot);
+    scan._rootDir = cleanRoot;
+    const arch = mapArchitecture(scan);
+    const md = generateArchitectureMap(arch, scan);
+    assert.ok(md.includes("## Dependency Graph"), "should have dependency graph section");
+    assert.ok(md.includes("ARCHITECTURAL VIOLATION") === false,
+      "should NOT show violation tag for clean architecture");
+    assert.ok(md.includes("No architectural violations"),
+      "should explicitly note no violations in clean directions");
+  });
+});
+
+describe("critical paths: business flow classification", () => {
+  let flowRoot;
+
+  before(() => {
+    flowRoot = mkdtempSync(join(tmpdir(), "zero-error-flow-"));
+    mkdirSync(join(flowRoot, "apps/api/src/routes/admin"), { recursive: true });
+    mkdirSync(join(flowRoot, "apps/api/src/routes/auth"), { recursive: true });
+
+    writeFileSync(join(flowRoot, "apps/api/src/routes/admin/users.ts"),
+      "export function GET() { return []; }\n");
+    writeFileSync(join(flowRoot, "apps/api/src/routes/auth/login.ts"),
+      "export function POST() { return {}; }\n");
+  });
+
+  after(() => {
+    if (flowRoot && existsSync(flowRoot)) rmSync(flowRoot, { recursive: true, force: true });
+  });
+
+  it("classifies critical paths by business flow, not just keyword", () => {
+    const scan = scanProject(flowRoot);
+    const adminPaths = scan.criticalPaths.filter(cp => cp.path.includes("admin"));
+    const authPaths = scan.criticalPaths.filter(cp => cp.path.includes("auth"));
+
+    // Admin paths should have flow "admin"
+    assert.ok(adminPaths.length > 0);
+    assert.ok(adminPaths.every(cp => cp.flow === "admin"),
+      "admin paths should have flow='admin'");
+
+    // Auth paths should have flow "authentication"
+    assert.ok(authPaths.length > 0);
+    assert.ok(authPaths.every(cp => cp.flow === "authentication"),
+      "auth paths should have flow='authentication'");
+  });
+
+  it("MD groups critical paths by business flow", () => {
+    const scan = scanProject(flowRoot);
+    scan._rootDir = flowRoot;
+    const arch = mapArchitecture(scan);
+    const md = generateArchitectureMap(arch, scan);
+    assert.ok(md.includes("### admin"), "MD should have admin flow section");
+    assert.ok(md.includes("### authentication"), "MD should have authentication flow section");
+  });
+});
+
+describe("boundary 2: severity classification by complexity", () => {
+  let severityRoot;
+
+  before(() => {
+    severityRoot = mkdtempSync(join(tmpdir(), "zero-error-severity-"));
+    mkdirSync(join(severityRoot, "apps/api/src/routes"), { recursive: true });
+    mkdirSync(join(severityRoot, "apps/api/src/lib"), { recursive: true });
+
+    writeFileSync(join(severityRoot, "package.json"), JSON.stringify({
+      name: "test", workspaces: ["apps/*"],
+    }));
+
+    // Simple route (low complexity, no delegation) — should be INFO
+    writeFileSync(join(severityRoot, "apps/api/src/routes/health.ts"),
+      "export function GET() { return Response.json({ ok: true }); }\n"
+    );
+
+    // Complex route (high complexity, no delegation) — should be CRITICAL
+    let complexCode = "export function POST(req) {\n";
+    complexCode += "  const data = req.json();\n";
+    for (let i = 0; i < 30; i++) {
+      complexCode += `  if (data.field${i}) { result.field${i} = process${i}(data); }\n`;
+    }
+    complexCode += "  return result;\n}\n";
+    writeFileSync(join(severityRoot, "apps/api/src/routes/complex.ts"), complexCode);
+
+    // Logic-core file (so delegation checker has something to check against)
+    writeFileSync(join(severityRoot, "apps/api/src/lib/service.ts"),
+      "export function process() { return true; }\n");
+  });
+
+  after(() => {
+    if (severityRoot && existsSync(severityRoot)) rmSync(severityRoot, { recursive: true, force: true });
+  });
+
+  it("classifies simple route as INFO (no delegation needed)", () => {
+    const scan = scanProject(severityRoot);
+    scan._rootDir = severityRoot;
+    const arch = mapArchitecture(scan);
+    const deleg = arch.boundaries.find(b => b.rule.includes("delegate to Logic Core"));
+    const healthViolation = deleg?.violations.find(v => v.file && v.file.includes("health"));
+    assert.ok(healthViolation, "health.ts should be in violations");
+    assert.equal(healthViolation.severity, "info",
+      "simple route should be INFO severity");
+  });
+
+  it("classifies complex route as CRITICAL (should delegate)", () => {
+    const scan = scanProject(severityRoot);
+    scan._rootDir = severityRoot;
+    const arch = mapArchitecture(scan);
+    const deleg = arch.boundaries.find(b => b.rule.includes("delegate to Logic Core"));
+    const complexViolation = deleg?.violations.find(v => v.file && v.file.includes("complex"));
+    assert.ok(complexViolation, "complex.ts should be in violations");
+    assert.equal(complexViolation.severity, "critical",
+      "complex route should be CRITICAL severity");
+  });
+});
+
+describe("tech debt: any type detection", () => {
+  let anyTypeRoot;
+
+  before(() => {
+    anyTypeRoot = mkdtempSync(join(tmpdir(), "zero-error-anytype-"));
+    mkdirSync(join(anyTypeRoot, "lib"), { recursive: true });
+
+    // File with 5 `any` types (above threshold of 3)
+    writeFileSync(join(anyTypeRoot, "lib", "bad-types.ts"),
+      `export function process(data: any): any {
+  const x: any = data;
+  const y = data as any;
+  const z: Array<any> = [];
+  return x;
+}
+`);
+  });
+
+  after(() => {
+    if (anyTypeRoot && existsSync(anyTypeRoot)) rmSync(anyTypeRoot, { recursive: true, force: true });
+  });
+
+  it("detects `any` type usage in TypeScript files", () => {
+    const scan = { _rootDir: anyTypeRoot, allScannedFiles: [], monorepo: false, envVars: [] };
+    const result = scanTechDebt(anyTypeRoot, scan);
+    const anyFindings = result.findings.filter(f => f.type === "any_type_usage");
+    assert.ok(anyFindings.length > 0, "should detect any type usage");
+    assert.ok(anyFindings[0].any_count >= 3, "should count at least 3 any usages");
+  });
+});
+
+describe("tech debt: unused exports detection", () => {
+  let unusedRoot;
+
+  before(() => {
+    unusedRoot = mkdtempSync(join(tmpdir(), "zero-error-unused-"));
+    mkdirSync(join(unusedRoot, "lib"), { recursive: true });
+
+    // File that exports but is never imported
+    writeFileSync(join(unusedRoot, "lib", "dead-code.ts"),
+      "export function unusedFunction() { return 42; }\nexport const unusedVar = 'dead';\n");
+
+    // File that exports and IS imported
+    writeFileSync(join(unusedRoot, "lib", "live-code.ts"),
+      "export function usedFunction() { return 42; }\n");
+    writeFileSync(join(unusedRoot, "lib", "consumer.ts"),
+      "import { usedFunction } from './live-code';\nexport function call() { return usedFunction(); }\n");
+  });
+
+  after(() => {
+    if (unusedRoot && existsSync(unusedRoot)) rmSync(unusedRoot, { recursive: true, force: true });
+  });
+
+  it("detects exported files that are never imported", () => {
+    const scan = { _rootDir: unusedRoot, allScannedFiles: [], monorepo: false, envVars: [] };
+    const result = scanTechDebt(unusedRoot, scan);
+    const unusedFindings = result.findings.filter(f => f.type === "unused_export");
+    const deadCodeFinding = unusedFindings.find(f => f.file.includes("dead-code"));
+    assert.ok(deadCodeFinding, "should detect dead-code.ts as unused export");
+    const liveCodeFinding = unusedFindings.find(f => f.file.includes("live-code"));
+    assert.ok(!liveCodeFinding, "should NOT flag live-code.ts (it is imported)");
+  });
+});
