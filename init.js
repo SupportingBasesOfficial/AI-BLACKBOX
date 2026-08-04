@@ -51,7 +51,7 @@ async function main() {
   console.log(`  [1/21] IDE detectada: ${ide}`);
 
   // Step 2: Detect languages
-  const { detectLanguages, LANGUAGE_TOOLS } = await import("./lib/language-detector.js");
+  const { detectLanguages } = await import("./lib/language-detector.js");
   const languages = detectLanguages(cwd);
   console.log(`  [2/21] Linguagens: ${languages.join(", ")}`);
 
@@ -119,7 +119,7 @@ async function main() {
 
   // Step 9: Generate shadow-context.md
   console.log(`  [9/21] Gerando shadow-context.md...`);
-  // flagResult already detected in step 7 — reuse it
+  // flagResult already detected in step 3.5 — reuse it
   const shadowContext = generateShadowContext(scanResult, flagResult, generateFeatureFlagsSection);
   writeFileSync(join(__dirname, "shadow-context.md"), shadowContext);
   console.log(`         ${flagResult.totalFlags} feature flags, ${scanResult.envVars.length} env vars`);
