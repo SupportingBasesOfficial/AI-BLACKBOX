@@ -636,3 +636,34 @@ describe("classification: app entry point vs barrel file", () => {
     assert.notEqual(r.layer, "ingress");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round 5 fixes — infrastructure packages + pino unused dep.
+// ---------------------------------------------------------------------------
+
+describe("classification: infrastructure packages in state-store", () => {
+  it("classifies packages/logger/src/index.ts as state-store", () => {
+    const r = classifyPath("packages/logger/src/index.ts", "source");
+    assert.equal(r.layer, "state-store");
+  });
+
+  it("classifies packages/telemetry/src/index.ts as state-store", () => {
+    const r = classifyPath("packages/telemetry/src/index.ts", "source");
+    assert.equal(r.layer, "state-store");
+  });
+
+  it("classifies packages/secrets/src/index.ts as state-store", () => {
+    const r = classifyPath("packages/secrets/src/index.ts", "source");
+    assert.equal(r.layer, "state-store");
+  });
+
+  it("classifies packages/db/src/index.ts as state-store", () => {
+    const r = classifyPath("packages/db/src/index.ts", "source");
+    assert.equal(r.layer, "state-store");
+  });
+
+  it("classifies packages/cache/src/index.ts as state-store", () => {
+    const r = classifyPath("packages/cache/src/index.ts", "source");
+    assert.equal(r.layer, "state-store");
+  });
+});
