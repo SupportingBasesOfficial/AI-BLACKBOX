@@ -11,9 +11,9 @@ import { formatFeedback, aggregateResults, ValidatorResult } from "../lib/valida
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_GATES = {
-  "pre-commit": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "tech-debt-check"],
-  "pre-push": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "tech-debt-check", "property-tests", "impact-analysis", "schema-sync-check", "api-compat-check", "perf-budget-check"],
-  "ci": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "tech-debt-check", "property-tests", "impact-analysis", "schema-sync-check", "api-compat-check", "perf-budget-check", "mutation-test"],
+  "pre-commit": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "tech-debt-check", "architecture-contract"],
+  "pre-push": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "tech-debt-check", "architecture-contract", "property-tests", "impact-analysis", "schema-sync-check", "api-compat-check", "perf-budget-check"],
+  "ci": ["type-check", "lint", "doctrine-check", "test", "security-scan", "contract-check", "anchor-check", "tech-debt-check", "architecture-contract", "property-tests", "impact-analysis", "schema-sync-check", "api-compat-check", "perf-budget-check", "mutation-test"],
   "timeout": { "pre-commit": 30, "pre-push": 120, "ci": 600 },
 };
 
@@ -146,8 +146,6 @@ function getChangedFiles(cwd, gate = "pre-commit") {
     if (upstreamFiles.length > 0) return upstreamFiles;
   }
 
-  // Pre-commit must inspect the staged snapshot. Do not silently substitute
-  // arbitrary working-tree files when nothing is staged.
   const stagedFiles = runGitNameOnly(cwd, "git diff --cached --name-only --diff-filter=ACMR");
   if (stagedFiles.length > 0) return stagedFiles;
 
@@ -157,7 +155,6 @@ function getChangedFiles(cwd, gate = "pre-commit") {
 }
 
 function getCiFiles(cwd) {
-  // PR workflows expose the target branch through GITHUB_BASE_REF.
   const baseRef = process.env.GITHUB_BASE_REF;
   if (baseRef) {
     const prFiles = runGitNameOnly(
@@ -167,17 +164,12 @@ function getCiFiles(cwd) {
     if (prFiles.length > 0) return prFiles;
   }
 
-  // Push workflows can expose the previous SHA. This catches the pushed range
-  // without depending on a shallow checkout.
   const before = process.env.GITHUB_EVENT_BEFORE;
   if (before && /^[0-9a-f]{40}$/i.test(before) && !/^0+$/.test(before)) {
     const pushFiles = runGitNameOnly(cwd, `git diff --name-only --diff-filter=ACMR ${before}...HEAD`);
     if (pushFiles.length > 0) return pushFiles;
   }
 
-  // Direct/local CI invocation or an event with no usable diff: validate the
-  // complete tracked project. A CI gate must never become a no-op because the
-  // runner cannot infer a diff range.
   return runGitNameOnly(cwd, "git ls-files");
 }
 
@@ -207,7 +199,6 @@ export function loadGatesConfig() {
   return loadGates();
 }
 
-// CLI entry point: node validators/index.js <gate>
 const __filename = fileURLToPath(import.meta.url);
 if (process.argv[1] && fileURLToPath(`file://${process.argv[1].replace(/\\/g, "/")}`) === __filename) {
   const gate = process.argv[2] || "pre-commit";
