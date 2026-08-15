@@ -24,41 +24,35 @@ export async function run(files, config = {}) {
 
   try {
     const output = execSync(framework.command, {
-      cwd, encoding: "utf-8",
+      cwd,
+      encoding: "utf-8",
       timeout: (config.timeout || 600) * 1000,
       stdio: ["pipe", "pipe", "pipe"]
     }).toString();
 
-    const result = framework.parse(output);
-    if (result.score !== undefined && result.score < threshold) {
-      errors.push(new ValidatorError({
-        file: "", rule: "mutation-score-low",
-        message: `Mutation score ${result.score}% abaixo do threshold ${threshold}%`,
-        ai_hint: `Mutation score ${result.score}% está abaixo do mínimo ${threshold}%. Os testes não detectam mutações suficientes. Adicione testes para cobrir os casos de mutação que sobreviveram.`,
-        severity: "error"
-      }));
-    }
-    for (const survived of result.survived || []) {
-      errors.push(new ValidatorError({
-        file: survived.file, line: survived.line || 0,
-        rule: "mutant-survived",
-        message: `Mutante sobreviveu: ${survived.mutator}`,
-        ai_hint: `Um mutante (${survived.mutator}) sobreviveu em ${survived.file}:${survived.line}. Adicione um teste que detecte esta mutação.`,
-        severity: "warning"
-      }));
-    }
+    evaluateMutationOutput(output, framework, threshold, errors);
   } catch (err) {
-    const output = (err.stdout || "").toString() + (err.stderr || "").toString();
+    const output = `${(err.stdout || "").toString()}${(err.stderr || "").toString()}`;
+
     if (output && framework.parse) {
-      const result = framework.parse(output);
-      if (result.score !== undefined && result.score < threshold) {
+      try {
+        const result = framework.parse(output);
+        if (result.score !== undefined || result.survived?.length > 0) {
+          evaluateParsedResult(result, threshold, errors);
+        } else {
+          errors.push(toolFailure(err, framework.name));
+        }
+      } catch (parseError) {
         errors.push(new ValidatorError({
-          file: "", rule: "mutation-score-low",
-          message: `Mutation score ${result.score}% abaixo do threshold ${threshold}%`,
-          ai_hint: `Mutation score ${result.score}% está abaixo do mínimo ${threshold}%. Adicione testes para cobrir mutações sobreviventes.`,
+          file: "",
+          rule: "mutation-output-invalid",
+          message: `Não foi possível interpretar a saída do ${framework.name}: ${parseError.message}`,
+          ai_hint: `Corrija a configuração do ${framework.name} ou atualize o parser do AI-BLACKBOX para a versão instalada. A validação não pode ser considerada válida sem um resultado interpretável.`,
           severity: "error"
         }));
       }
+    } else {
+      errors.push(toolFailure(err, framework.name));
     }
   }
 
@@ -69,13 +63,76 @@ export async function run(files, config = {}) {
   });
 }
 
+function evaluateMutationOutput(output, framework, threshold, errors) {
+  let result;
+  try {
+    result = framework.parse(output);
+  } catch (err) {
+    errors.push(new ValidatorError({
+      file: "",
+      rule: "mutation-output-invalid",
+      message: `Não foi possível interpretar a saída do ${framework.name}: ${err.message}`,
+      ai_hint: `Corrija a configuração do ${framework.name} ou atualize o parser do AI-BLACKBOX para a versão instalada.`,
+      severity: "error"
+    }));
+    return;
+  }
+
+  if (result.score === undefined && (!result.survived || result.survived.length === 0)) {
+    errors.push(new ValidatorError({
+      file: "",
+      rule: "mutation-result-missing",
+      message: `O ${framework.name} executou, mas não produziu um resultado de mutation testing interpretável.`,
+      ai_hint: `Verifique o formato de saída do ${framework.name} e mantenha o validator bloqueante quando o resultado não puder ser comprovado.`,
+      severity: "error"
+    }));
+    return;
+  }
+
+  evaluateParsedResult(result, threshold, errors);
+}
+
+function evaluateParsedResult(result, threshold, errors) {
+  if (result.score !== undefined && result.score < threshold) {
+    errors.push(new ValidatorError({
+      file: "",
+      rule: "mutation-score-low",
+      message: `Mutation score ${result.score}% abaixo do threshold ${threshold}%`,
+      ai_hint: `Mutation score ${result.score}% está abaixo do mínimo ${threshold}%. Os testes não detectam mutações suficientes. Adicione testes para cobrir os casos de mutação que sobreviveram.`,
+      severity: "error"
+    }));
+  }
+
+  for (const survived of result.survived || []) {
+    errors.push(new ValidatorError({
+      file: survived.file,
+      line: survived.line || 0,
+      rule: "mutant-survived",
+      message: `Mutante sobreviveu: ${survived.mutator}`,
+      ai_hint: `Um mutante (${survived.mutator}) sobreviveu em ${survived.file}:${survived.line}. Adicione um teste que detecte esta mutação.`,
+      severity: "warning"
+    }));
+  }
+}
+
+function toolFailure(err, frameworkName) {
+  return new ValidatorError({
+    file: "",
+    rule: "mutation-tool-failed",
+    message: `${frameworkName} falhou durante a execução: ${err.message}`,
+    ai_hint: `Corrija a falha do ${frameworkName}. O mutation gate não ignora erros de infraestrutura ou execução, pois isso criaria um falso positivo de qualidade.`,
+    severity: "error"
+  });
+}
+
 function detectMutationFramework(cwd) {
   try {
     const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf-8"));
     if (pkg.devDependencies?.["@stryker-mutator/core"] || pkg.dependencies?.["@stryker-mutator/core"]) {
       const mutateFlag = pkg.stryker?.mutate ? `--mutate "${pkg.stryker.mutate}"` : "";
       return {
-        command: `npx stryker run ${mutateFlag} 2>&1 || true`,
+        name: "Stryker",
+        command: `npx stryker run ${mutateFlag}`,
         parse: parseStryker
       };
     }
@@ -83,20 +140,20 @@ function detectMutationFramework(cwd) {
 
   if (existsSync(join(cwd, "setup.cfg")) || existsSync(join(cwd, "mutmut_config.py")) ||
       (existsSync(join(cwd, "pyproject.toml")) && readFileSync(join(cwd, "pyproject.toml"), "utf-8").includes("mutmut"))) {
-    return { command: "mutmut run 2>&1 || true", parse: parseMutmut };
+    return { name: "mutmut", command: "mutmut run", parse: parseMutmut };
   }
 
   if (existsSync(join(cwd, "Cargo.toml"))) {
     try {
       execSync("cargo mutants --version 2>/dev/null", { encoding: "utf-8", timeout: 5000 });
-      return { command: "cargo mutants 2>&1 || true", parse: parseCargoMutants };
+      return { name: "cargo-mutants", command: "cargo mutants", parse: parseCargoMutants };
     } catch {}
   }
 
   if (existsSync(join(cwd, "go.mod"))) {
     try {
       execSync("gremlins --version 2>/dev/null", { encoding: "utf-8", timeout: 5000 });
-      return { command: "gremlins unleash 2>&1 || true", parse: parseGremlins };
+      return { name: "gremlins", command: "gremlins unleash", parse: parseGremlins };
     } catch {}
   }
 
@@ -104,7 +161,7 @@ function detectMutationFramework(cwd) {
     try {
       const pom = readFileSync(join(cwd, "pom.xml"), "utf-8");
       if (pom.includes("pitest") || pom.includes("org.pitest")) {
-        return { command: "mvn org.pitest:pitest-maven:mutationCoverage -q 2>&1 || true", parse: parsePIT };
+        return { name: "PIT", command: "mvn org.pitest:pitest-maven:mutationCoverage -q", parse: parsePIT };
       }
     } catch {}
   }
@@ -113,7 +170,7 @@ function detectMutationFramework(cwd) {
     try {
       const gemfile = readFileSync(join(cwd, "Gemfile"), "utf-8");
       if (gemfile.includes("mutant")) {
-        return { command: "bundle exec mutant run 2>&1 || true", parse: parseMutant };
+        return { name: "Mutant", command: "bundle exec mutant run", parse: parseMutant };
       }
     } catch {}
   }
@@ -122,7 +179,7 @@ function detectMutationFramework(cwd) {
     try {
       const composer = JSON.parse(readFileSync(join(cwd, "composer.json"), "utf-8"));
       if (composer.require?.["infection/infection"] || composer["require-dev"]?.["infection/infection"]) {
-        return { command: "vendor/bin/infection --no-progress 2>&1 || true", parse: parseInfection };
+        return { name: "Infection", command: "vendor/bin/infection --no-progress", parse: parseInfection };
       }
     } catch {}
   }
@@ -130,7 +187,7 @@ function detectMutationFramework(cwd) {
   if (existsSync(join(cwd, ".csproj")) || fileExistsWithExt(cwd, ".csproj")) {
     try {
       execSync("dotnet stryker --version 2>/dev/null", { encoding: "utf-8", timeout: 5000 });
-      return { command: "dotnet stryker 2>&1 || true", parse: parseStryker };
+      return { name: "dotnet-stryker", command: "dotnet stryker", parse: parseStryker };
     } catch {}
   }
 
@@ -138,7 +195,7 @@ function detectMutationFramework(cwd) {
     try {
       const buildFile = existsSync(join(cwd, "build.sbt")) ? readFileSync(join(cwd, "build.sbt"), "utf-8") : readFileSync(join(cwd, "build.gradle.kts"), "utf-8");
       if (buildFile.includes("stryker4s")) {
-        return { command: "stryker4s 2>&1 || true", parse: parseStryker };
+        return { name: "stryker4s", command: "stryker4s", parse: parseStryker };
       }
     } catch {}
   }
@@ -161,10 +218,7 @@ function parseGremlins(output) {
   const killed = parseInt(killedMatch?.[1] || 0);
   const total = survived + killed;
   const score = total > 0 ? Math.round((killed / total) * 100) : undefined;
-  return {
-    score,
-    survived: survived > 0 ? [{ mutator: "gremlins", file: "", line: 0 }] : []
-  };
+  return { score, survived: survived > 0 ? [{ mutator: "gremlins", file: "", line: 0 }] : [] };
 }
 
 function parsePIT(output) {
@@ -172,23 +226,17 @@ function parsePIT(output) {
   const score = scoreMatch ? parseFloat(scoreMatch[1]) : undefined;
   const survivedMatch = output.match(/(\d+)\s+SURVIVED/i);
   const survived = parseInt(survivedMatch?.[1] || 0);
-  return {
-    score,
-    survived: survived > 0 ? [{ mutator: "pit", file: "", line: 0 }] : []
-  };
+  return { score, survived: survived > 0 ? [{ mutator: "pit", file: "", line: 0 }] : [] };
 }
 
 function parseMutant(output) {
-  const survivedMatch = output.match(/(\d+)\s+alive/i);
-  const killedMatch = output.match(/(\d+)\s+killed/i);
+  const survivedMatch = output.match(/survived:\s*(\d+)/);
+  const killedMatch = output.match(/killed:\s*(\d+)/);
   const survived = parseInt(survivedMatch?.[1] || 0);
   const killed = parseInt(killedMatch?.[1] || 0);
   const total = survived + killed;
   const score = total > 0 ? Math.round((killed / total) * 100) : undefined;
-  return {
-    score,
-    survived: survived > 0 ? [{ mutator: "mutant", file: "", line: 0 }] : []
-  };
+  return { score, survived: survived > 0 ? [{ mutator: "mutant", file: "", line: 0 }] : [] };
 }
 
 function parseInfection(output) {
@@ -196,27 +244,18 @@ function parseInfection(output) {
   const score = scoreMatch ? parseFloat(scoreMatch[1]) : undefined;
   const survivedMatch = output.match(/(\d+)\s+escaped/i);
   const survived = parseInt(survivedMatch?.[1] || 0);
-  return {
-    score,
-    survived: survived > 0 ? [{ mutator: "infection", file: "", line: 0 }] : []
-  };
+  return { score, survived: survived > 0 ? [{ mutator: "infection", file: "", line: 0 }] : [] };
 }
 
 function parseStryker(output) {
   const scoreMatch = output.match(/Mutation score(?:.*?):\s*(\d+(?:\.\d+)?)%/);
   const score = scoreMatch ? parseFloat(scoreMatch[1]) : undefined;
-
   const survived = [];
   const survivedPattern = /Survived \[(.+?)\]\s+(.+?):(\d+)/g;
   const matches = [...output.matchAll(survivedPattern)];
   for (const match of matches) {
-    survived.push({
-      mutator: match[1],
-      file: match[2],
-      line: parseInt(match[3])
-    });
+    survived.push({ mutator: match[1], file: match[2], line: parseInt(match[3]) });
   }
-
   return { score, survived };
 }
 
@@ -227,11 +266,7 @@ function parseMutmut(output) {
   const killed = parseInt(killedMatch?.[1] || 0);
   const total = survived + killed;
   const score = total > 0 ? Math.round((killed / total) * 100) : undefined;
-
-  return {
-    score,
-    survived: survived > 0 ? [{ mutator: "unknown", file: "", line: 0 }] : []
-  };
+  return { score, survived: survived > 0 ? [{ mutator: "unknown", file: "", line: 0 }] : [] };
 }
 
 function parseCargoMutants(output) {
@@ -241,9 +276,5 @@ function parseCargoMutants(output) {
   const killed = parseInt(killedMatch?.[1] || 0);
   const total = survived + killed;
   const score = total > 0 ? Math.round((killed / total) * 100) : undefined;
-
-  return {
-    score,
-    survived: survived > 0 ? [{ mutator: "unknown", file: "", line: 0 }] : []
-  };
+  return { score, survived: survived > 0 ? [{ mutator: "unknown", file: "", line: 0 }] : [] };
 }
