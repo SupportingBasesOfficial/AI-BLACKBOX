@@ -1,5 +1,6 @@
 // validators/index.js — Central validator runner (v2)
-// Loads gates.json for validator lists, supports cache + progressive feedback
+// Loads gates.json for validator lists, supports local cache + progressive feedback.
+// CI is deliberately uncached and validates a real repository scope.
 
 import { existsSync, readFileSync } from "fs";
 import { join, dirname } from "path";
@@ -42,13 +43,18 @@ export async function runValidators(gate, config = {}) {
 
   const results = [];
   const cwd = config.cwd || process.cwd();
-  const files = getChangedFiles(cwd);
+  const files = getChangedFiles(cwd, gate);
+  const useCache = gate !== "ci" && config.useCache !== false;
+
+  console.log(`  Scope: ${gate} — ${files.length} file(s)${useCache ? " — cache enabled" : " — cache disabled"}`);
 
   let cache = null;
-  try {
-    const { createCache } = await import("../lib/validator-cache.js");
-    cache = createCache(dirname(__dirname));
-  } catch {}
+  if (useCache) {
+    try {
+      const { createCache } = await import("../lib/validator-cache.js");
+      cache = createCache(dirname(__dirname));
+    } catch {}
+  }
 
   for (const validatorName of validatorList) {
     let allCached = files.length > 0;
@@ -130,22 +136,71 @@ export async function runValidators(gate, config = {}) {
   return aggregated;
 }
 
-function getChangedFiles(cwd) {
-  try {
-    const output = execSync("git diff --cached --name-only --diff-filter=ACMR", {
-      cwd, encoding: "utf-8", timeout: 5000
-    }).toString();
-    return output.trim().split("\n").filter(f => f && !f.startsWith(".zero-error/"));
-  } catch {
-    try {
-      const output = execSync("git diff --name-only", {
-        cwd, encoding: "utf-8", timeout: 5000
-      }).toString();
-      return output.trim().split("\n").filter(f => f && !f.startsWith(".zero-error/"));
-    } catch {
-      return [];
-    }
+function getChangedFiles(cwd, gate = "pre-commit") {
+  if (gate === "ci") {
+    return getCiFiles(cwd);
   }
+
+  if (gate === "pre-push") {
+    const upstreamFiles = runGitNameOnly(cwd, "git diff --name-only --diff-filter=ACMR @{upstream}...HEAD");
+    if (upstreamFiles.length > 0) return upstreamFiles;
+  }
+
+  // Pre-commit must inspect the staged snapshot. Do not silently substitute
+  // arbitrary working-tree files when nothing is staged.
+  const stagedFiles = runGitNameOnly(cwd, "git diff --cached --name-only --diff-filter=ACMR");
+  if (stagedFiles.length > 0) return stagedFiles;
+
+  if (gate === "pre-commit") return [];
+
+  return runGitNameOnly(cwd, "git diff --name-only --diff-filter=ACMR");
+}
+
+function getCiFiles(cwd) {
+  // PR workflows expose the target branch through GITHUB_BASE_REF.
+  const baseRef = process.env.GITHUB_BASE_REF;
+  if (baseRef) {
+    const prFiles = runGitNameOnly(
+      cwd,
+      `git diff --name-only --diff-filter=ACMR origin/${sanitizeRef(baseRef)}...HEAD`
+    );
+    if (prFiles.length > 0) return prFiles;
+  }
+
+  // Push workflows can expose the previous SHA. This catches the pushed range
+  // without depending on a shallow checkout.
+  const before = process.env.GITHUB_EVENT_BEFORE;
+  if (before && /^[0-9a-f]{40}$/i.test(before) && !/^0+$/.test(before)) {
+    const pushFiles = runGitNameOnly(cwd, `git diff --name-only --diff-filter=ACMR ${before}...HEAD`);
+    if (pushFiles.length > 0) return pushFiles;
+  }
+
+  // Direct/local CI invocation or an event with no usable diff: validate the
+  // complete tracked project. A CI gate must never become a no-op because the
+  // runner cannot infer a diff range.
+  return runGitNameOnly(cwd, "git ls-files");
+}
+
+function runGitNameOnly(cwd, command) {
+  try {
+    const output = execSync(command, {
+      cwd,
+      encoding: "utf-8",
+      timeout: 10000,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).toString();
+    return output.split("\n").map(f => f.trim()).filter(f => f && !shouldIgnorePath(f));
+  } catch {
+    return [];
+  }
+}
+
+function sanitizeRef(ref) {
+  return ref.replace(/[^A-Za-z0-9._/-]/g, "");
+}
+
+function shouldIgnorePath(file) {
+  return file === ".zero-error" || file.startsWith(".zero-error/") || file.includes("node_modules/");
 }
 
 export function loadGatesConfig() {
